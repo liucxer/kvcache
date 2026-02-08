@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CacheFS - 键值存储后端服务</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        secondary: '#10b981',
+                        danger: '#ef4444',
+                        warning: '#f59e0b',
+                        info: '#3b82f6',
+                        light: '#f3f4f6',
+                        dark: '#1f2937',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                },
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .transition-all-300 {
+                transition: all 300ms ease-in-out;
+            }
+            .card-shadow {
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            }
+            .nav-link {
+                @apply px-4 py-2 rounded-md text-sm font-medium transition-all-300;
+            }
+            .nav-link:hover {
+                @apply bg-gray-100;
+            }
+            .nav-link.active {
+                @apply bg-primary text-white;
+            }
+            .btn {
+                @apply px-4 py-2 rounded-md font-medium transition-all-300;
+            }
+            .btn-primary {
+                @apply bg-primary text-white hover:bg-blue-600;
+            }
+            .btn-secondary {
+                @apply bg-secondary text-white hover:bg-green-600;
+            }
+            .btn-danger {
+                @apply bg-danger text-white hover:bg-red-600;
+            }
+            .btn-outline {
+                @apply border border-gray-300 text-gray-700 hover:bg-gray-100;
+            }
+            .form-input {
+                @apply w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary focus:border-primary;
+            }
+            .form-label {
+                @apply block text-sm font-medium text-gray-700 mb-1;
+            }
+            .form-group {
+                @apply mb-4;
+            }
+            .card {
+                @apply bg-white rounded-lg shadow-md p-6;
+            }
+            .alert {
+                @apply p-4 rounded-md mb-4;
+            }
+            .alert-success {
+                @apply bg-green-100 text-green-700;
+            }
+            .alert-danger {
+                @apply bg-red-100 text-red-700;
+            }
+            .alert-info {
+                @apply bg-blue-100 text-blue-700;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <!-- 页面标题 -->
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-900">CacheFS <span class="text-primary">键值存储后端服务</span></h1>
+            <p class="text-gray-600 mt-2">高性能、可靠的键值存储解决方案</p>
+        </header>
+
+        <!-- 导航栏 -->
+        <nav class="bg-white rounded-lg shadow-md mb-8">
+            <ul class="flex flex-wrap">
+                <li>
+                    <a href="#health" class="nav-link active" data-tab="health">
+                        <i class="fa fa-heartbeat mr-2"></i>健康检查
+                    </a>
+                </li>
+                <li>
+                    <a href="#single" class="nav-link" data-tab="single">
+                        <i class="fa fa-key mr-2"></i>单个键值
+                    </a>
+                </li>
+                <li>
+                    <a href="#batch" class="nav-link" data-tab="batch">
+                        <i class="fa fa-th-large mr-2"></i>批量操作
+                    </a>
+                </li>
+                <li>
+                    <a href="#scan" class="nav-link" data-tab="scan">
+                        <i class="fa fa-search mr-2"></i>扫描操作
+                    </a>
+                </li>
+                <li>
+                    <a href="#config" class="nav-link" data-tab="config">
+                        <i class="fa fa-cog mr-2"></i>配置管理
+                    </a>
+                </li>
+                <li>
+                    <a href="#metrics" class="nav-link" data-tab="metrics">
+                        <i class="fa fa-bar-chart mr-2"></i>监控指标
+                    </a>
+                </li>
+            </ul>
+        </nav>
+
+        <!-- 主内容区域 -->
+        <main class="space-y-8">
+            <!-- 健康检查模块 -->
+            <section id="health" class="tab-content active">
+                <div class="card">
+                    <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                        <i class="fa fa-heartbeat mr-2 text-primary"></i>健康检查
+                    </h2>
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-gray-700">服务状态</p>
+                                <p id="health-status" class="text-lg font-medium"></p>
+                            </div>
+                            <button id="health-check-btn" class="btn btn-primary">
+                                <i class="fa fa-refresh mr-2"></i>检查
+                            </button>
+                        </div>
+                        <div id="health-message" class="alert hidden"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 单个键值操作模块 -->
+            <section id="single" class="tab-content hidden">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <!-- 设置键值对 -->
+                    <div class="card">
+                        <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                            <i class="fa fa-plus-circle mr-2 text-primary"></i>设置键值对
+                        </h2>
+                        <form id="set-form" class="space-y-4">
+                            <div class="form-group">
+                                <label class="form-label" for="set-key">键</label>
+                                <input type="text" id="set-key" class="form-input" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="set-value">值</label>
+                                <textarea id="set-value" class="form-input" rows="3" required></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="set-ttl">TTL (秒，可选)</label>
+                                <input type="number" id="set-ttl" class="form-input" min="0">
+                            </div>
+                            <button type="submit" class="btn btn-primary w-full">
+                                <i class="fa fa-save mr-2"></i>保存
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- 获取值 -->
+                    <div class="card">
+                        <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                            <i class="fa fa-search mr-2 text-primary"></i>获取值
+                        </h2>
+                        <form id="get-form" class="space-y-4">
+                            <div class="form-group">
+                                <label class="form-label" for="get-key">键</label>
+                                <input type="text" id="get-key" class="form-input" required>
+                            </div>
+                            <button type="submit" class="btn btn-secondary w-full">
+                                <i class="fa fa-search mr-2"></i>获取
+                            </button>
+                        </form>
+                        <div id="get-result" class="mt-4 hidden"></div>
+                    </div>
+
+                    <!-- 删除键值对 -->
+                    <div class="card">
+                        <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                            <i class="fa fa-trash mr-2 text-danger"></i>删除键值对
+                        </h2>
+                        <form id="delete-form" class="space-y-4">
+                            <div class="form-group">
+                                <label class="form-label" for="delete-key">键</label>
+                                <input type="text" id="delete-key" class="form-input" required>
+                            </div>
+                            <button type="submit" class="btn btn-danger w-full">
+                                <i class="fa fa-trash mr-2"></i>删除
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 批量操作模块 -->
+            <section id="batch" class="tab-content hidden">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- 批量设置键值对 -->
+                    <div class="card">
+                        <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                            <i class="fa fa-batch mr-2 text-primary"></i>批量设置键值对
+                        </h2>
+                        <form id="mset-form" class="space-y-4">
+                            <div class="form-group">
+                                <label class="form-label">键值对</label>
+                                <div id="mset-kvs" class="space-y-2">
+                                    <div class="flex space-x-2">
+                                        <input type="text" class="form-input" placeholder="键" required>
+                                        <input type="text" class="form-input" placeholder="值" required>
+                                        <button type="button" class="btn btn-outline flex-shrink-0" onclick="removeKV(this)">
+                                            <i class="fa fa-times"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-outline mb-4" onclick="addKV('mset')">
+                                <i class="fa fa-plus mr-2"></i>添加键值对
+                            </button>
+                            <div class="form-group">
+                                <label class="form-label" for="mset-ttl">TTL (秒，可选)</label>
+                                <input type="number" id="mset-ttl" class="form-input" min="0">
+                            </div>
+                            <button type="submit" class="btn btn-primary w-full">
+                                <i class="fa fa-save mr-2"></i>保存
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- 批量获取值 -->
+                    <div class="card">
+                        <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                            <i class="fa fa-search mr-2 text-secondary"></i>批量获取值
+                        </h2>
+                        <form id="mget-form" class="space-y-4">
+                            <div class="form-group">
+                                <label class="form-label">键列表</label>
+                                <div id="mget-keys" class="space-y-2">
+                                    <div class="flex space-x-2">
+                                        <input type="text" class="form-input" placeholder="键" required>
+                                        <button type="button" class="btn btn-outline flex-shrink-0" onclick="removeKey(this)">
+                                            <i class="fa fa-times"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-outline mb-4" onclick="addKey('mget')">
+                                <i class="fa fa-plus mr-2"></i>添加键
+                            </button>
+                            <button type="submit" class="btn btn-secondary w-full">
+                                <i class="fa fa-search mr-2"></i>获取
+                            </button>
+                        </form>
+                        <div id="mget-result" class="mt-4 hidden"></div>
+                    </div>
+
+                    <!-- 批量删除键值对 -->
+                    <div class="card md:col-span-2">
+                        <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                            <i class="fa fa-trash mr-2 text-danger"></i>批量删除键值对
+                        </h2>
+                        <form id="mdelete-form" class="space-y-4">
+                            <div class="form-group">
+                                <label class="form-label">键列表</label>
+                                <div id="mdelete-keys" class="space-y-2">
+                                    <div class="flex space-x-2">
+                                        <input type="text" class="form-input" placeholder="键" required>
+                                        <button type="button" class="btn btn-outline flex-shrink-0" onclick="removeKey(this)">
+                                            <i class="fa fa-times"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-outline mb-4" onclick="addKey('mdelete')">
+                                <i class="fa fa-plus mr-2"></i>添加键
+                            </button>
+                            <button type="submit" class="btn btn-danger w-full">
+                                <i class="fa fa-trash mr-2"></i>删除
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 扫描操作模块 -->
+            <section id="scan" class="tab-content hidden">
+                <div class="card">
+                    <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                        <i class="fa fa-search mr-2 text-primary"></i>扫描操作
+                    </h2>
+                    <form id="scan-form" class="space-y-4">
+                        <div class="form-group">
+                            <label class="form-label" for="scan-prefix">前缀</label>
+                            <input type="text" id="scan-prefix" class="form-input">
+                        </div>
+                        <div class="flex space-x-4">
+                            <button type="submit" class="btn btn-secondary flex-1">
+                                <i class="fa fa-search mr-2"></i>扫描键值对
+                            </button>
+                            <button type="button" id="scan-keys-btn" class="btn btn-outline flex-1">
+                                <i class="fa fa-list mr-2"></i>只扫描键
+                            </button>
+                        </div>
+                    </form>
+                    <div id="scan-result" class="mt-4 hidden"></div>
+                </div>
+            </section>
+
+            <!-- 配置管理模块 -->
+            <section id="config" class="tab-content hidden">
+                <div class="card">
+                    <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                        <i class="fa fa-cog mr-2 text-primary"></i>配置管理
+                    </h2>
+                    <div class="mb-6">
+                        <h3 class="text-lg font-medium text-gray-900 mb-2">当前配置</h3>
+                        <div id="current-config" class="bg-gray-50 p-4 rounded-md">
+                            <div class="animate-pulse">
+                                <div class="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+                                <div class="h-4 bg-gray-200 rounded w-1/2 mb-2"></div>
+                                <div class="h-4 bg-gray-200 rounded w-5/6 mb-2"></div>
+                                <div class="h-4 bg-gray-200 rounded w-2/3 mb-2"></div>
+                                <div class="h-4 bg-gray-200 rounded w-4/5 mb-2"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <form id="update-config-form" class="space-y-4">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="form-group">
+                                <label class="form-label" for="rocksdb-path">RocksDB 路径</label>
+                                <input type="text" id="rocksdb-path" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="disk-store-path">磁盘存储路径</label>
+                                <input type="text" id="disk-store-path" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="large-value-size">大值阈值 (字节)</label>
+                                <input type="number" id="large-value-size" class="form-input" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="max-disk-usage">最大磁盘使用率 (%)</label>
+                                <input type="number" id="max-disk-usage" class="form-input" min="0" max="100" step="0.1">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="eviction-check-interval">淘汰检查间隔 (秒)</label>
+                                <input type="number" id="eviction-check-interval" class="form-input" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="eviction-batch-size">淘汰批量大小</label>
+                                <input type="number" id="eviction-batch-size" class="form-input" min="1">
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-full">
+                            <i class="fa fa-save mr-2"></i>更新配置
+                        </button>
+                    </form>
+                    <div id="config-message" class="alert hidden mt-4"></div>
+                </div>
+            </section>
+
+            <!-- 监控指标模块 -->
+            <section id="metrics" class="tab-content hidden">
+                <div class="card">
+                    <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                        <i class="fa fa-bar-chart mr-2 text-primary"></i>监控指标
+                    </h2>
+                    <p class="text-gray-700 mb-4">服务运行状态和性能指标</p>
+                    <div class="space-y-4">
+                        <div class="flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-4">
+                            <div class="bg-blue-100 rounded-lg p-4 flex-1">
+                                <h3 class="font-medium text-blue-800">操作计数</h3>
+                                <p id="metric-ops" class="text-2xl font-bold text-blue-900">0</p>
+                            </div>
+                            <div class="bg-green-100 rounded-lg p-4 flex-1">
+                                <h3 class="font-medium text-green-800">错误计数</h3>
+                                <p id="metric-errors" class="text-2xl font-bold text-green-900">0</p>
+                            </div>
+                            <div class="bg-yellow-100 rounded-lg p-4 flex-1">
+                                <h3 class="font-medium text-yellow-800">键数量</h3>
+                                <p id="metric-keys" class="text-2xl font-bold text-yellow-900">0</p>
+                            </div>
+                        </div>
+                        <div class="bg-gray-100 rounded-lg p-4">
+                            <h3 class="font-medium text-gray-800 mb-2">监控指标链接</h3>
+                            <a href="/metrics" target="_blank" class="text-primary hover:underline">
+                                <i class="fa fa-external-link mr-2"></i>查看详细监控指标
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- 结果显示区域 -->
+        <div id="result" class="fixed top-4 right-4 max-w-md z-10 hidden"></div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
