@@ -34,7 +34,6 @@ KVCache是一个基于Go语言开发的高性能键值存储服务，使用Rocks
 ├── config/          # 配置模块
 │   ├── config.go
 │   └── config_test.go
-├── doc/             # 项目文档
 ├── proto/           # Protocol Buffers定义
 │   ├── kv.pb.go
 │   ├── kv.proto
@@ -42,6 +41,7 @@ KVCache是一个基于Go语言开发的高性能键值存储服务，使用Rocks
 ├── service/         # 业务逻辑层
 │   ├── kv_service.go
 │   ├── metrics.go
+│   ├── performance_test.go  # 性能测试用例
 │   └── service_test.go
 ├── storage/         # 存储层
 │   ├── disk_store.go
@@ -51,8 +51,12 @@ KVCache是一个基于Go语言开发的高性能键值存储服务，使用Rocks
 │   └── storage_test.go
 ├── test/            # 测试代码
 │   └── api/
+│       ├── grpc_performance_test.go  # gRPC性能测试用例
+│       ├── grpc_test.go
+│       └── http_test.go
 ├── web/             # Web前端
 ├── main.go          # 主入口文件
+├── Makefile         # 构建和测试脚本
 ├── go.mod           # Go模块定义
 └── go.sum           # 依赖版本锁定
 ```
@@ -78,15 +82,34 @@ go mod download
 
 ### 编译运行
 
+#### 使用Makefile（推荐）
+
 ```bash
 # 编译
-go build -o kvcache .
+make build
+
+# 运行
+make run
+
+# 清理
+make clean
+```
+
+#### 使用Go命令
+
+```bash
+# 编译（包含CGO环境变量）
+CGO_CFLAGS="-I/opt/homebrew/include" \
+CGO_LDFLAGS="-L/opt/homebrew/lib  -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" \
+  go build -o kvcache .
 
 # 运行
 ./kvcache
 
-# 或者直接运行
-go run main.go
+# 或者直接运行（包含CGO环境变量）
+CGO_CFLAGS="-I/opt/homebrew/include" \
+CGO_LDFLAGS="-L/opt/homebrew/lib  -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" \
+  go run main.go
 ```
 
 服务启动后，默认监听以下端口：
@@ -178,6 +201,122 @@ gRPC接口定义在 `proto/kv.proto` 文件中，包含以下方法：
 - `MDelete` - 批量删除
 - `GetConfig` - 获取配置
 - `UpdateConfig` - 更新配置
+
+## 测试
+
+### 运行测试
+
+项目包含全面的单元测试和集成测试。您可以使用以下命令运行测试：
+
+#### 使用Makefile
+
+```bash
+# 运行所有测试
+make test
+
+# 运行配置测试
+make test-config
+
+# 运行服务测试
+make test-service
+
+# 运行存储测试
+make test-storage
+
+# 运行API测试
+make test-api
+
+# 运行HTTP API测试
+make test-http
+
+# 运行gRPC API测试
+make test-grpc
+
+# 运行详细输出的测试
+make test-verbose
+```
+
+#### 使用Go命令
+
+```bash
+# 运行所有测试
+CGO_CFLAGS="-I/opt/homebrew/include" \
+CGO_LDFLAGS="-L/opt/homebrew/lib  -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" \
+  go test ./...
+
+# 运行特定包的测试
+CGO_CFLAGS="-I/opt/homebrew/include" \
+CGO_LDFLAGS="-L/opt/homebrew/lib  -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" \
+  go test ./config
+```
+
+### 性能测试
+
+项目包含服务层和gRPC客户端的性能测试用例。您可以使用以下命令运行性能测试：
+
+#### 使用Makefile
+
+```bash
+# 运行所有性能测试
+make test-performance
+
+# 运行设置操作基准测试
+make test-benchmark-set
+
+# 运行获取操作基准测试
+make test-benchmark-get
+
+# 运行并发基准测试
+make test-benchmark-concurrent
+
+# 运行混合操作基准测试
+make test-benchmark-mixed
+
+# 运行gRPC性能测试
+make test-grpc-performance
+
+# 运行gRPC设置操作基准测试
+make test-grpc-benchmark-set
+
+# 运行gRPC获取操作基准测试
+make test-grpc-benchmark-get
+
+# 运行gRPC并发基准测试
+make test-grpc-benchmark-concurrent
+
+# 运行gRPC混合操作基准测试
+make test-grpc-benchmark-mixed
+```
+
+### 性能测试结果
+
+#### 服务层性能
+
+| 测试名称 | 操作/秒 | 平均延迟/操作 |
+|---------|---------|--------------|
+| Set (单线程) | ~316,732 | ~3,762 ns |
+| Get (单线程) | ~1,629,542 | ~783 ns |
+| Set (并发) | ~214,846 | ~6,049 ns |
+| Get (并发) | ~4,086,961 | ~309.7 ns |
+| 混合操作 | ~747,752 | ~1,459 ns |
+
+#### gRPC客户端性能
+
+| 测试名称 | 操作/秒 | 平均延迟/操作 |
+|---------|---------|--------------|
+| Set (单线程) | ~20,506 | ~58,621 ns |
+| Get (单线程) | ~21,990 | ~49,830 ns |
+| Set (并发) | ~65,038 | ~21,667 ns |
+| Get (并发) | ~95,284 | ~15,663 ns |
+| 混合操作 | ~76,860 | ~15,564 ns |
+
+### 性能分析
+
+- **服务层性能**：服务层表现出优异的性能，获取操作明显快于设置操作。这是预期的，因为在键值存储中，读取操作通常比写入操作快。
+
+- **gRPC性能**：gRPC客户端性能比直接服务调用慢，这是预期的，因为网络传输、序列化和反序列化会带来额外开销。然而，性能仍然良好，尤其是在并发场景中。
+
+- **并发性能**：服务层和gRPC客户端在并发场景中都表现出显著的性能提升，展示了系统高效处理多个并发请求的能力。
 
 ## 配置说明
 

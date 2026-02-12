@@ -34,7 +34,6 @@ KVCache is a high-performance key-value storage service developed in Go language
 ├── config/          # Configuration module
 │   ├── config.go
 │   └── config_test.go
-├── doc/             # Project documentation
 ├── proto/           # Protocol Buffers definitions
 │   ├── kv.pb.go
 │   ├── kv.proto
@@ -42,6 +41,7 @@ KVCache is a high-performance key-value storage service developed in Go language
 ├── service/         # Business logic layer
 │   ├── kv_service.go
 │   ├── metrics.go
+│   ├── performance_test.go  # Performance test cases
 │   └── service_test.go
 ├── storage/         # Storage layer
 │   ├── disk_store.go
@@ -51,8 +51,12 @@ KVCache is a high-performance key-value storage service developed in Go language
 │   └── storage_test.go
 ├── test/            # Test code
 │   └── api/
+│       ├── grpc_performance_test.go  # gRPC performance test cases
+│       ├── grpc_test.go
+│       └── http_test.go
 ├── web/             # Web frontend
 ├── main.go          # Main entry file
+├── Makefile         # Build and test scripts
 ├── go.mod           # Go module definition
 └── go.sum           # Dependency version lock
 ```
@@ -78,15 +82,34 @@ go mod download
 
 ### Build and Run
 
+#### Using Makefile (Recommended)
+
 ```bash
 # Build
-go build -o kvcache .
+make build
+
+# Run
+make run
+
+# Clean
+make clean
+```
+
+#### Using Go Commands
+
+```bash
+# Build with CGO environment variables
+CGO_CFLAGS="-I/opt/homebrew/include" \
+CGO_LDFLAGS="-L/opt/homebrew/lib  -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" \
+  go build -o kvcache .
 
 # Run
 ./kvcache
 
-# Or run directly
-go run main.go
+# Or run directly with CGO environment variables
+CGO_CFLAGS="-I/opt/homebrew/include" \
+CGO_LDFLAGS="-L/opt/homebrew/lib  -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" \
+  go run main.go
 ```
 
 After starting the service, it listens on the following ports by default:
@@ -178,6 +201,124 @@ The gRPC interface is defined in the `proto/kv.proto` file, including the follow
 - `MDelete` - Batch delete
 - `GetConfig` - Get configuration
 - `UpdateConfig` - Update configuration
+
+## Testing
+
+### Running Tests
+
+The project includes comprehensive unit tests and integration tests. You can run the tests using the following commands:
+
+#### Using Makefile
+
+```bash
+# Run all tests
+make test
+
+# Run config tests
+make test-config
+
+# Run service tests
+make test-service
+
+# Run storage tests
+make test-storage
+
+# Run API tests
+make test-api
+
+# Run HTTP API tests
+make test-http
+
+# Run gRPC API tests
+make test-grpc
+
+# Run tests with verbose output
+make test-verbose
+```
+
+#### Using Go Commands
+
+```bash
+# Run all tests
+CGO_CFLAGS="-I/opt/homebrew/include" \
+CGO_LDFLAGS="-L/opt/homebrew/lib  -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" \
+  go test ./...
+
+# Run specific package tests
+CGO_CFLAGS="-I/opt/homebrew/include" \
+CGO_LDFLAGS="-L/opt/homebrew/lib  -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" \
+  go test ./config
+```
+
+## Performance Testing
+
+### Running Performance Tests
+
+The project includes performance test cases for both the service layer and gRPC client. You can run the performance tests using the following commands:
+
+#### Using Makefile
+
+```bash
+# Run all performance tests
+make test-performance
+
+# Run set benchmark
+make test-benchmark-set
+
+# Run get benchmark
+make test-benchmark-get
+
+# Run concurrent benchmarks
+make test-benchmark-concurrent
+
+# Run mixed operations benchmark
+make test-benchmark-mixed
+
+# Run gRPC performance tests
+make test-grpc-performance
+
+# Run gRPC set benchmark
+make test-grpc-benchmark-set
+
+# Run gRPC get benchmark
+make test-grpc-benchmark-get
+
+# Run gRPC concurrent benchmarks
+make test-grpc-benchmark-concurrent
+
+# Run gRPC mixed operations benchmark
+make test-grpc-benchmark-mixed
+```
+
+### Performance Test Results
+
+#### Service Layer Performance
+
+| Test Name | Operations/Second | Average Latency/Operation |
+|-----------|-------------------|---------------------------|
+| Set (Single-thread) | ~316,732 | ~3,762 ns |
+| Get (Single-thread) | ~1,629,542 | ~783 ns |
+| Set (Concurrent) | ~214,846 | ~6,049 ns |
+| Get (Concurrent) | ~4,086,961 | ~309.7 ns |
+| Mixed Operations | ~747,752 | ~1,459 ns |
+
+#### gRPC Client Performance
+
+| Test Name | Operations/Second | Average Latency/Operation |
+|-----------|-------------------|---------------------------|
+| Set (Single-thread) | ~20,506 | ~58,621 ns |
+| Get (Single-thread) | ~21,990 | ~49,830 ns |
+| Set (Concurrent) | ~65,038 | ~21,667 ns |
+| Get (Concurrent) | ~95,284 | ~15,663 ns |
+| Mixed Operations | ~76,860 | ~15,564 ns |
+
+### Performance Analysis
+
+- **Service Layer Performance**: The service layer shows excellent performance, with get operations being significantly faster than set operations. This is expected since get operations are typically faster than write operations in key-value stores.
+
+- **gRPC Performance**: The gRPC client performance is slower than direct service calls, as expected, due to the additional overhead of network transmission, serialization, and deserialization. However, the performance is still good, especially in concurrent scenarios.
+
+- **Concurrent Performance**: Both the service layer and gRPC client show significant performance improvements in concurrent scenarios, demonstrating the system's ability to handle multiple concurrent requests efficiently.
 
 ## Configuration
 
