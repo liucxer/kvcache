@@ -124,7 +124,9 @@ func (s *RocksDBStorage) initRocksDB() error {
 	s.opts = gorocksdb.NewDefaultOptions()
 	s.opts.SetCreateIfMissing(true)
 
+	// 初始化选项
 	s.cfOpts = gorocksdb.NewDefaultOptions()
+
 	s.readOpts = gorocksdb.NewDefaultReadOptions()
 	s.writeOpts = gorocksdb.NewDefaultWriteOptions()
 

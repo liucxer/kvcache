@@ -7,8 +7,9 @@ import (
 // Config 配置结构体
 type Config struct {
 	RocksDB struct {
-		Path    string                 `json:"path"`
-		Options map[string]interface{} `json:"options"`
+		Path           string                 `json:"path"`
+		Options        map[string]interface{} `json:"options"`
+		BlockCacheSize int                    `json:"block_cache_size"` // Block Cache大小，单位MB
 	} `json:"rocksdb"`
 
 	GRPC struct {
@@ -42,8 +43,8 @@ type Config struct {
 	} `json:"monitoring"`
 
 	Cache struct {
-		Enabled     bool `json:"enabled"`
-		SizeThreshold int `json:"size_threshold"` // 缓存阈值，单位字节
+		Enabled       bool `json:"enabled"`
+		SizeThreshold int  `json:"size_threshold"` // 缓存阈值，单位字节
 	} `json:"cache"`
 }
 
@@ -73,6 +74,8 @@ func DefaultConfig() *Config {
 
 	config.Cache.Enabled = true
 	config.Cache.SizeThreshold = 10240 // 默认10KB
+
+	config.RocksDB.BlockCacheSize = 64 // 默认64MB
 
 	return config
 }
