@@ -40,6 +40,11 @@ type Config struct {
 		MetricsPath string `json:"metrics_path"`
 		HealthPath  string `json:"health_path"`
 	} `json:"monitoring"`
+
+	Cache struct {
+		Enabled     bool `json:"enabled"`
+		SizeThreshold int `json:"size_threshold"` // 缓存阈值，单位字节
+	} `json:"cache"`
 }
 
 // DefaultConfig 返回默认配置
@@ -65,6 +70,9 @@ func DefaultConfig() *Config {
 	config.Monitoring.Enabled = true
 	config.Monitoring.MetricsPath = "/metrics"
 	config.Monitoring.HealthPath = "/api/v1/health"
+
+	config.Cache.Enabled = true
+	config.Cache.SizeThreshold = 10240 // 默认10KB
 
 	return config
 }

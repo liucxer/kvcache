@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"kvcache/config"
@@ -14,6 +15,7 @@ type KVService struct {
 	storage storage.Storage
 	config  *config.Config
 	metrics *Metrics
+	cache   sync.Map // 内存缓存，使用sync.Map保证线程安全
 }
 
 // NewKVService 创建新的键值存储服务实例
@@ -44,6 +46,11 @@ func (s *KVService) Set(ctx context.Context, key string, value []byte, ttl time.
 		return err
 	}
 
+	// 检查是否需要写入缓存
+	if s.config.Cache.Enabled && len(value) < s.config.Cache.SizeThreshold {
+		s.cache.Store(key, value)
+	}
+
 	s.metrics.Sets.Inc()
 	s.metrics.Keys.Inc()
 	return nil
@@ -61,6 +68,14 @@ func (s *KVService) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, errors.New("empty key")
 	}
 
+	// 优先从缓存中查询
+	if s.config.Cache.Enabled {
+		if cachedValue, ok := s.cache.Load(key); ok {
+			s.metrics.Gets.Inc()
+			return cachedValue.([]byte), nil
+		}
+	}
+
 	value, found, err := s.storage.Get([]byte(key))
 	if err != nil {
 		s.metrics.GetErrors.WithLabelValues(err.Error()).Inc()
@@ -70,6 +85,11 @@ func (s *KVService) Get(ctx context.Context, key string) ([]byte, error) {
 	if !found {
 		s.metrics.GetErrors.WithLabelValues("not_found").Inc()
 		return nil, errors.New("key not found")
+	}
+
+	// 如果值小于缓存阈值，并且缓存未命中，则将值写入缓存
+	if s.config.Cache.Enabled && len(value) < s.config.Cache.SizeThreshold {
+		s.cache.Store(key, value)
 	}
 
 	s.metrics.Gets.Inc()
@@ -92,6 +112,11 @@ func (s *KVService) Delete(ctx context.Context, key string) error {
 	if err != nil {
 		s.metrics.DeleteErrors.WithLabelValues(err.Error()).Inc()
 		return err
+	}
+
+	// 从缓存中删除
+	if s.config.Cache.Enabled {
+		s.cache.Delete(key)
 	}
 
 	s.metrics.Deletes.Inc()
@@ -138,6 +163,15 @@ func (s *KVService) MSet(ctx context.Context, kvs map[string][]byte, ttl time.Du
 		return err
 	}
 
+	// 批量写入缓存
+	if s.config.Cache.Enabled {
+		for key, value := range kvs {
+			if len(value) < s.config.Cache.SizeThreshold {
+				s.cache.Store(key, value)
+			}
+		}
+	}
+
 	s.metrics.MSets.Inc()
 	s.metrics.Keys.Add(float64(len(kvs)))
 	return nil
@@ -155,16 +189,44 @@ func (s *KVService) MGet(ctx context.Context, keys []string) (map[string][]byte,
 		return nil, errors.New("empty keys")
 	}
 
-	// 转换keys为[][]byte
-	byteKeys := make([][]byte, len(keys))
-	for i, key := range keys {
-		byteKeys[i] = []byte(key)
+	results := make(map[string][]byte)
+	missedKeys := make([]string, 0)
+
+	// 优先从缓存中查询
+	if s.config.Cache.Enabled {
+		for _, key := range keys {
+			if cachedValue, ok := s.cache.Load(key); ok {
+				results[key] = cachedValue.([]byte)
+			} else {
+				missedKeys = append(missedKeys, key)
+			}
+		}
+	} else {
+		missedKeys = keys
 	}
 
-	results, err := s.storage.MGet(byteKeys)
-	if err != nil {
-		s.metrics.MGetErrors.WithLabelValues(err.Error()).Inc()
-		return nil, err
+	// 从存储中查询缓存未命中的key
+	if len(missedKeys) > 0 {
+		// 转换missedKeys为[][]byte
+		byteKeys := make([][]byte, len(missedKeys))
+		for i, key := range missedKeys {
+			byteKeys[i] = []byte(key)
+		}
+
+		storageResults, err := s.storage.MGet(byteKeys)
+		if err != nil {
+			s.metrics.MGetErrors.WithLabelValues(err.Error()).Inc()
+			return nil, err
+		}
+
+		// 合并结果并写入缓存
+		for key, value := range storageResults {
+			results[key] = value
+			// 如果值小于缓存阈值，将其写入缓存
+			if s.config.Cache.Enabled && len(value) < s.config.Cache.SizeThreshold {
+				s.cache.Store(key, value)
+			}
+		}
 	}
 
 	s.metrics.MGets.Inc()
@@ -193,6 +255,13 @@ func (s *KVService) MDelete(ctx context.Context, keys []string) error {
 	if err != nil {
 		s.metrics.MDeleteErrors.WithLabelValues(err.Error()).Inc()
 		return err
+	}
+
+	// 批量从缓存中删除
+	if s.config.Cache.Enabled {
+		for _, key := range keys {
+			s.cache.Delete(key)
+		}
 	}
 
 	s.metrics.MDeletes.Inc()
