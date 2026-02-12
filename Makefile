@@ -58,6 +58,48 @@ test-verbose:
 	@echo "Running all tests with verbose output..."
 	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test -v ./...
 
+# 性能测试目标
+test-performance:
+	@echo "Running performance tests..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test -bench=. ./service
+
+test-benchmark-set:
+	@echo "Running set benchmark..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test -bench=BenchmarkSet ./service
+
+test-benchmark-get:
+	@echo "Running get benchmark..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test -bench=BenchmarkGet ./service
+
+test-benchmark-concurrent:
+	@echo "Running concurrent benchmarks..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test -bench=BenchmarkSetConcurrentBenchmarkGetConcurrent ./service
+
+test-benchmark-mixed:
+	@echo "Running mixed operations benchmark..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test -bench=BenchmarkMixedOperations ./service
+
+# gRPC性能测试目标
+test-grpc-performance:
+	@echo "Running gRPC performance tests..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test -bench=BenchmarkGRPC ./test/api
+
+test-grpc-benchmark-set:
+	@echo "Running gRPC set benchmark..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test -bench=BenchmarkGRPCSet ./test/api
+
+test-grpc-benchmark-get:
+	@echo "Running gRPC get benchmark..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test -bench=BenchmarkGRPCGet ./test/api
+
+test-grpc-benchmark-concurrent:
+	@echo "Running gRPC concurrent benchmarks..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test -bench=BenchmarkGRPCSetConcurrentBenchmarkGRPCGetConcurrent ./test/api
+
+test-grpc-benchmark-mixed:
+	@echo "Running gRPC mixed operations benchmark..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test -bench=BenchmarkGRPCMixedOperations ./test/api
+
 # 帮助目标
 help:
 	@echo "Makefile for kvcache project"
@@ -74,6 +116,16 @@ help:
 	@echo "  make test-http - Run HTTP API tests"
 	@echo "  make test-grpc - Run gRPC API tests"
 	@echo "  make test-verbose - Run all tests with verbose output"
+	@echo "  make test-performance - Run all performance tests"
+	@echo "  make test-benchmark-set - Run set benchmark"
+	@echo "  make test-benchmark-get - Run get benchmark"
+	@echo "  make test-benchmark-concurrent - Run concurrent benchmarks"
+	@echo "  make test-benchmark-mixed - Run mixed operations benchmark"
+	@echo "  make test-grpc-performance - Run all gRPC performance tests"
+	@echo "  make test-grpc-benchmark-set - Run gRPC set benchmark"
+	@echo "  make test-grpc-benchmark-get - Run gRPC get benchmark"
+	@echo "  make test-grpc-benchmark-concurrent - Run gRPC concurrent benchmarks"
+	@echo "  make test-grpc-benchmark-mixed - Run gRPC mixed operations benchmark"
 	@echo "  make help     - Show this help message"
 
-.PHONY: all build clean run test test-config test-service test-storage test-api test-http test-grpc test-verbose help
+.PHONY: all build clean run test test-config test-service test-storage test-api test-http test-grpc test-verbose test-performance test-benchmark-set test-benchmark-get test-benchmark-concurrent test-benchmark-mixed test-grpc-performance test-grpc-benchmark-set test-grpc-benchmark-get test-grpc-benchmark-concurrent test-grpc-benchmark-mixed help
