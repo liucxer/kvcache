@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"cachefs/proto"
+	"kvcache/proto"
 )
 
 // 全局变量已在http_test.go中声明

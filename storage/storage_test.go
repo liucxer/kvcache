@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"cachefs/config"
+	"kvcache/config"
 )
 
 // TestNewStorage 测试创建存储实例

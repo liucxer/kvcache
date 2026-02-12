@@ -29,16 +29,16 @@ type Config struct {
 	} `json:"value"`
 
 	Eviction struct {
-		Enabled               bool    `json:"enabled"`
-		DiskUsageThreshold    float64 `json:"disk_usage_threshold"`
-		CheckInterval         int     `json:"check_interval"`
-		BatchSize             int     `json:"batch_size"`
+		Enabled            bool    `json:"enabled"`
+		DiskUsageThreshold float64 `json:"disk_usage_threshold"`
+		CheckInterval      int     `json:"check_interval"`
+		BatchSize          int     `json:"batch_size"`
 	} `json:"eviction"`
 
 	Monitoring struct {
-		Enabled      bool   `json:"enabled"`
-		MetricsPath  string `json:"metrics_path"`
-		HealthPath   string `json:"health_path"`
+		Enabled     bool   `json:"enabled"`
+		MetricsPath string `json:"metrics_path"`
+		HealthPath  string `json:"health_path"`
 	} `json:"monitoring"`
 }
 
@@ -59,7 +59,7 @@ func DefaultConfig() *Config {
 
 	config.Eviction.Enabled = true
 	config.Eviction.DiskUsageThreshold = 0.8 // 80%
-	config.Eviction.CheckInterval = 60      // 60 seconds
+	config.Eviction.CheckInterval = 60       // 60 seconds
 	config.Eviction.BatchSize = 100
 
 	config.Monitoring.Enabled = true

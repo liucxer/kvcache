@@ -13,11 +13,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"cachefs/api"
-	"cachefs/config"
-	"cachefs/proto"
-	"cachefs/service"
-	"cachefs/storage"
+	"kvcache/api"
+	"kvcache/config"
+	"kvcache/proto"
+	"kvcache/service"
+	"kvcache/storage"
 )
 
 var (

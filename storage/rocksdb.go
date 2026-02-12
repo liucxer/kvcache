@@ -1,9 +1,9 @@
 package storage
 
 import (
-	"kvcache/config"
 	"encoding/json"
 	"fmt"
+	"kvcache/config"
 	"strings"
 	"time"
 
@@ -256,20 +256,21 @@ func (s *RocksDBStorage) Scan(prefix []byte) ([][]byte, error) {
 	var keys [][]byte
 	prefixStr := string(prefix)
 
-	for iter.Seek(prefix); iter.Valid(); iter.Next() {
+	// 从第一个键开始遍历
+	for iter.SeekToFirst(); iter.Valid(); iter.Next() {
 		key := iter.Key().Data()
-		keyStr := string(key)
+		// 复制键，因为 iter.Key().Data() 会在 iter.Next() 后失效
+		keyCopy := make([]byte, len(key))
+		copy(keyCopy, key)
+		keyStr := string(keyCopy)
 
-		if !strings.HasPrefix(keyStr, prefixStr) {
-			break
+		// 检查键是否以前缀开头
+		if strings.HasPrefix(keyStr, prefixStr) {
+			// 跳过配置键
+			if keyStr != config.ConfigKey {
+				keys = append(keys, keyCopy)
+			}
 		}
-
-		// 跳过配置键
-		if keyStr == config.ConfigKey {
-			continue
-		}
-
-		keys = append(keys, key)
 	}
 
 	if err := iter.Err(); err != nil {

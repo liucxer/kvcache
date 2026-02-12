@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"cachefs/config"
-	"cachefs/storage"
+	"kvcache/config"
+	"kvcache/storage"
 )
 
 // TestNewKVService 测试创建KV服务实例
