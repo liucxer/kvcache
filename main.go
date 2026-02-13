@@ -20,6 +20,12 @@ import (
 	"kvcache/storage"
 )
 
+const (
+	// 端口范围
+	minPort = 33000
+	maxPort = 33100
+)
+
 func main() {
 	// 初始化配置
 	cfg := config.DefaultConfig()
@@ -37,16 +43,54 @@ func main() {
 	// 设置监控指标处理
 	http.Handle("/metrics", promhttp.Handler())
 
+	// 自动检测可用端口
+	grpcPort, httpPort := findAvailablePorts()
+	log.Printf("Selected ports: GRPC=%d, HTTP=%d", grpcPort, httpPort)
+
 	// 启动gRPC服务器
-	grpcAddr := fmt.Sprintf(":%d", 50051)
+	grpcAddr := fmt.Sprintf(":%d", grpcPort)
 	grpcServer := startGRPCServer(grpcAddr, kvService)
 
 	// 启动HTTP服务器
-	httpAddr := fmt.Sprintf(":%d", 8080)
+	httpAddr := fmt.Sprintf(":%d", httpPort)
 	httpServer := startHTTPServer(httpAddr, kvService)
 
 	// 等待中断信号
 	waitForShutdown(grpcServer, httpServer)
+}
+
+// findAvailablePorts 查找可用的端口对
+func findAvailablePorts() (int, int) {
+	// 确保从偶数端口开始
+	startPort := minPort
+	if startPort%2 != 0 {
+		startPort++
+	}
+
+	for port := startPort; port <= maxPort-1; port += 2 {
+		// 检查GRPC端口是否可用（偶数）
+		grpcAddr := fmt.Sprintf(":%d", port)
+		grpcLis, err := net.Listen("tcp", grpcAddr)
+		if err != nil {
+			continue
+		}
+		grpcLis.Close()
+
+		// 检查HTTP端口是否可用（奇数）
+		httpAddr := fmt.Sprintf(":%d", port+1)
+		httpLis, err := net.Listen("tcp", httpAddr)
+		if err != nil {
+			continue
+		}
+		httpLis.Close()
+
+		// 找到可用端口对
+		return port, port + 1
+	}
+
+	// 没有找到可用端口
+	log.Fatalf("No available ports found in range %d-%d", minPort, maxPort)
+	return 0, 0
 }
 
 // startGRPCServer 启动gRPC服务器

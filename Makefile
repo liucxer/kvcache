@@ -100,6 +100,38 @@ test-grpc-benchmark-mixed:
 	@echo "Running gRPC mixed operations benchmark..."
 	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test -bench=BenchmarkGRPCMixedOperations ./test/api
 
+# 代码覆盖率目标
+test-coverage:
+	@echo "Running tests with coverage..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test ./... -coverprofile=coverage.out
+	@go tool cover -func=coverage.out
+
+test-coverage-html:
+	@echo "Running tests with coverage and generating HTML report..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test ./... -coverprofile=coverage.out
+	@go tool cover -html=coverage.out -o coverage.html
+	@echo "HTML coverage report generated: coverage.html"
+
+test-coverage-config:
+	@echo "Running config tests with coverage..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test ./config -coverprofile=coverage.out
+	@go tool cover -func=coverage.out
+
+test-coverage-service:
+	@echo "Running service tests with coverage..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test ./service -coverprofile=coverage.out
+	@go tool cover -func=coverage.out
+
+test-coverage-storage:
+	@echo "Running storage tests with coverage..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test ./storage -coverprofile=coverage.out
+	@go tool cover -func=coverage.out
+
+test-coverage-api:
+	@echo "Running API tests with coverage..."
+	@CGO_CFLAGS=$(CGO_CFLAGS) CGO_LDFLAGS=$(CGO_LDFLAGS) go test ./test/api -coverprofile=coverage.out
+	@go tool cover -func=coverage.out
+
 # 帮助目标
 help:
 	@echo "Makefile for kvcache project"
@@ -126,6 +158,12 @@ help:
 	@echo "  make test-grpc-benchmark-get - Run gRPC get benchmark"
 	@echo "  make test-grpc-benchmark-concurrent - Run gRPC concurrent benchmarks"
 	@echo "  make test-grpc-benchmark-mixed - Run gRPC mixed operations benchmark"
+	@echo "  make test-coverage - Run all tests with coverage"
+	@echo "  make test-coverage-html - Run tests with coverage and generate HTML report"
+	@echo "  make test-coverage-config - Run config tests with coverage"
+	@echo "  make test-coverage-service - Run service tests with coverage"
+	@echo "  make test-coverage-storage - Run storage tests with coverage"
+	@echo "  make test-coverage-api - Run API tests with coverage"
 	@echo "  make help     - Show this help message"
 
-.PHONY: all build clean run test test-config test-service test-storage test-api test-http test-grpc test-verbose test-performance test-benchmark-set test-benchmark-get test-benchmark-concurrent test-benchmark-mixed test-grpc-performance test-grpc-benchmark-set test-grpc-benchmark-get test-grpc-benchmark-concurrent test-grpc-benchmark-mixed help
+.PHONY: all build clean run test test-config test-service test-storage test-api test-http test-grpc test-verbose test-performance test-benchmark-set test-benchmark-get test-benchmark-concurrent test-benchmark-mixed test-grpc-performance test-grpc-benchmark-set test-grpc-benchmark-get test-grpc-benchmark-concurrent test-grpc-benchmark-mixed test-coverage test-coverage-html test-coverage-config test-coverage-service test-coverage-storage test-coverage-api help
