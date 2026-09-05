@@ -46,6 +46,11 @@ type Metrics struct {
 	Keys        prometheus.Gauge
 	DiskUsage   prometheus.Gauge
 	MemoryUsage prometheus.Gauge
+
+	// 缓存指标
+	CacheHits   prometheus.Counter
+	CacheMisses prometheus.Counter
+	CacheSize   prometheus.Gauge
 }
 
 // NewMetrics 创建新的监控指标实例
@@ -227,6 +232,26 @@ func NewMetrics() *Metrics {
 			Subsystem: "storage",
 			Name:      "memory_usage_bytes",
 			Help:      "Current memory usage in bytes",
+		}),
+
+		// 缓存指标
+		CacheHits: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: "cachefs",
+			Subsystem: "cache",
+			Name:      "hits_total",
+			Help:      "Total number of cache hits",
+		}),
+		CacheMisses: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: "cachefs",
+			Subsystem: "cache",
+			Name:      "misses_total",
+			Help:      "Total number of cache misses",
+		}),
+		CacheSize: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: "cachefs",
+			Subsystem: "cache",
+			Name:      "size_bytes",
+			Help:      "Current cache size in bytes",
 		}),
 	}
 

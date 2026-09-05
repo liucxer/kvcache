@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	_ "net/http/pprof" // pprof handler 注册到 DefaultServeMux，经 /debug/pprof/ 路由暴露
 	"strconv"
 	"time"
 
@@ -54,6 +55,10 @@ func (s *HTTPServer) setupRoutes() {
 
 	// 监控指标
 	s.router.GET("/metrics", gin.WrapH(http.DefaultServeMux))
+
+	// pprof 性能分析（/debug/pprof/profile、/debug/pprof/goroutine 等，走 DefaultServeMux）
+	// 注意：gin 不允许与通配符前缀重叠的静态路由，/debug/pprof/ 由 /*path 覆盖
+	s.router.Any("/debug/pprof/*path", gin.WrapH(http.DefaultServeMux))
 }
 
 // Run 启动HTTP服务器

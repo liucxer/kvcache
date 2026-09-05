@@ -28,6 +28,7 @@ func NewGRPCServer(service *service.KVService) *GRPCServer {
 func (s *GRPCServer) Register(srv *grpc.Server) {
 	proto.RegisterKeyValueServiceServer(srv, s)
 	proto.RegisterHealthServer(srv, s)
+	proto.RegisterKVStreamServiceServer(srv, s)
 }
 
 // Set 设置键值对
@@ -72,20 +73,19 @@ func (s *GRPCServer) Delete(ctx context.Context, req *proto.DeleteRequest) (*pro
 	return &proto.DeleteResponse{Success: true}, nil
 }
 
-// ScanKeys 扫描键
+// ScanKeys 扫描键（只返回 key，不加载 value——大值在磁盘文件上，加载一遍再丢弃是纯浪费）
 func (s *GRPCServer) ScanKeys(ctx context.Context, req *proto.ScanRequest) (*proto.ScanKeysResponse, error) {
-	results, err := s.service.Scan(ctx, string(req.Prefix), 100)
+	keys, err := s.service.ScanKeys(ctx, string(req.Prefix), 100)
 	if err != nil {
 		return &proto.ScanKeysResponse{Error: err.Error()}, nil
 	}
 
-	// 转换为[]byte类型的keys
-	keys := make([][]byte, 0, len(results))
-	for k := range results {
-		keys = append(keys, []byte(k))
+	byteKeys := make([][]byte, 0, len(keys))
+	for _, k := range keys {
+		byteKeys = append(byteKeys, []byte(k))
 	}
 
-	return &proto.ScanKeysResponse{Keys: keys}, nil
+	return &proto.ScanKeysResponse{Keys: byteKeys}, nil
 }
 
 // ScanKeyValues 扫描键值对

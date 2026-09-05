@@ -45,7 +45,15 @@ type Config struct {
 	Cache struct {
 		Enabled       bool `json:"enabled"`
 		SizeThreshold int  `json:"size_threshold"` // 缓存阈值，单位字节
+		MaxKeys       int  `json:"max_keys"`       // 内存缓存最大 key 数，防止无界增长；<=0 表示不限制
 	} `json:"cache"`
+
+	// 分布式部署参数
+	InstanceName string `json:"instance_name"` // 实例名称，集群内唯一
+	NodeName     string `json:"node_name"`     // 物理机器标识
+	GRPCAddr     string `json:"grpc_addr"`     // gRPC 绑定地址
+	HTTPAddr     string `json:"http_addr"`     // HTTP 绑定地址
+	TiKVPD       string `json:"tikv_pd"`       // TiKV PD 地址
 }
 
 // DefaultConfig 返回默认配置
@@ -74,6 +82,7 @@ func DefaultConfig() *Config {
 
 	config.Cache.Enabled = true
 	config.Cache.SizeThreshold = 10240 // 默认10KB
+	config.Cache.MaxKeys = 100000      // 内存缓存条数上限，防止无界增长 OOM
 
 	config.RocksDB.BlockCacheSize = 64 // 默认64MB
 

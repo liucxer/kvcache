@@ -291,7 +291,7 @@ func TestStorageScan(t *testing.T) {
 	}
 
 	// 测试扫描功能
-	keys, err := store.Scan([]byte("scan"))
+	keys, err := store.Scan([]byte("scan"), 100)
 	if err != nil {
 		t.Fatalf("Failed to scan: %v", err)
 	}

@@ -1,82 +1,108 @@
 # KVCache - High Performance Key-Value Storage Service
 
-## Project Introduction
+## Introduction
 
-KVCache is a high-performance key-value storage service developed in Go language, using RocksDB as the underlying storage engine, and providing both gRPC and HTTP interfaces, supporting large-scale data storage and fast access.
+KVCache is a high-performance key-value storage service built in Go, using RocksDB as the underlying storage engine. It exposes both gRPC and HTTP interfaces, supporting large-scale data storage with fast access.
 
 ## Features
 
-- **High Performance Storage**: Based on RocksDB engine, providing efficient key-value storage and retrieval
-- **Dual Interface Support**: Providing both gRPC and HTTP RESTful interfaces
-- **Large Value Storage**: Automatically storing large values to disk, optimizing memory usage
-- **Batch Operations**: Supporting batch set, get and delete operations
-- **Data Scanning**: Supporting prefix-based data scanning
-- **Configuration Management**: Supporting runtime configuration updates
-- **Monitoring Metrics**: Integrated with Prometheus monitoring
-- **Health Check**: Providing service health status check
-- **Automatic Eviction**: Automatic data eviction mechanism based on disk usage
+- **High Performance Storage**: Built on RocksDB engine for efficient key-value storage and retrieval
+- **Dual Protocol**: Provides both gRPC and HTTP RESTful interfaces
+- **Large Value Storage**: Automatically stores values >1MB to separate disk files; RocksDB retains only path references
+- **Memory Cache**: `sync.Map`-based L1 read cache with auto-fill for small values (<10KB)
+- **Batch Operations**: Atomic batch Set, Get, and Delete via RocksDB WriteBatch
+- **Prefix Scan**: Ordered prefix-based scanning over RocksDB iterators
+- **Auto Eviction**: FIFO eviction triggered by disk usage threshold
+- **Runtime Configuration**: Modify service configuration via API at runtime
+- **Prometheus Monitoring**: End-to-end operation counters, error rates, and latency histograms
+- **Multi-Instance Deployment**: Automatic port discovery and process management scripts
+- **Client SDK**: Multi-backend round-robin load balancing with failover retry
+- **Web Management UI**: Graphical KV CRUD, scan, and configuration management
 
 ## Technology Stack
 
-- **Language**: Go 1.18+
-- **Storage Engine**: RocksDB (via gorocksdb)
-- **RPC Framework**: gRPC
-- **HTTP Framework**: Gin
-- **Monitoring**: Prometheus
-- **Serialization**: Protocol Buffers
+| Component | Technology |
+|-----------|------------|
+| Language | Go 1.18+ |
+| Storage Engine | RocksDB (via grocksdb CGO binding) |
+| RPC Framework | gRPC + Protocol Buffers |
+| HTTP Framework | Gin |
+| Monitoring | Prometheus client_golang |
+
+## Architecture
+
+```
+main.go (auto port discovery 33000-33100)
+  ├── config/          → Config structs + defaults (pure data, no I/O)
+  ├── storage/         → RocksDB wrapper + disk large-value store + eviction engine
+  │     └── Storage interface
+  ├── service/         → Business logic + Prometheus metrics + memory cache
+  │     └── depends on storage.Storage
+  ├── api/             → gRPC Server + HTTP Server (thin adapter layer)
+  │     └── depends on service.KVService
+  ├── client/          → gRPC client SDK (round-robin + failover retry)
+  │     └── depends on proto
+  └── web/             → Static frontend (Tailwind CSS SPA)
+```
+
+Dependency chain (unidirectional): `api → service → storage`. `main.go` wires everything together.
 
 ## Project Structure
 
 ```
-├── api/             # API layer, containing gRPC and HTTP server implementations
-│   ├── grpc_server.go
-│   └── http_server.go
-├── config/          # Configuration module
-│   ├── config.go
-│   └── config_test.go
-├── proto/           # Protocol Buffers definitions
-│   ├── kv.pb.go
-│   ├── kv.proto
-│   └── kv_grpc.pb.go
-├── service/         # Business logic layer
-│   ├── kv_service.go
-│   ├── metrics.go
-│   ├── performance_test.go  # Performance test cases
-│   └── service_test.go
-├── storage/         # Storage layer
-│   ├── disk_store.go
-│   ├── eviction.go
-│   ├── rocksdb.go
-│   ├── storage.go
-│   └── storage_test.go
-├── test/            # Test code
-│   └── api/
-│       ├── grpc_performance_test.go  # gRPC performance test cases
-│       ├── grpc_test.go
-│       └── http_test.go
-├── web/             # Web frontend
-├── main.go          # Main entry file
-├── Makefile         # Build and test scripts
-├── go.mod           # Go module definition
-└── go.sum           # Dependency version lock
+├── api/                          # API layer
+│   ├── grpc_server.go            #   gRPC adapter (implements proto interfaces)
+│   └── http_server.go            #   HTTP adapter (Gin routes)
+├── client/                       # Client SDK
+│   ├── client.go                 #   Multi-backend round-robin + retry logic
+│   └── example.go                #   Usage example
+├── config/                       # Configuration module
+│   ├── config.go                 #   Config struct + DefaultConfig()
+│   └── config_test.go            #   Config tests
+├── proto/                        # Protocol Buffers
+│   ├── kv.proto                  #   Service definition source
+│   ├── kv.pb.go                  #   Generated message code
+│   └── kv_grpc.pb.go            #   Generated gRPC stubs
+├── service/                      # Business logic layer
+│   ├── kv_service.go             #   KVService (cache + metrics + forwarding)
+│   ├── metrics.go                #   Prometheus metric definitions
+│   ├── service_test.go           #   Service unit tests
+│   └── performance_test.go       #   Benchmarks
+├── storage/                      # Storage layer
+│   ├── storage.go                #   Storage interface definition
+│   ├── rocksdb.go                #   RocksDB implementation (core)
+│   ├── disk_store.go             #   Large value disk storage
+│   ├── eviction.go               #   Eviction manager
+│   └── storage_test.go           #   Storage unit tests
+├── test/api/                     # Integration tests
+│   ├── http_test.go              #   HTTP API tests + global setup
+│   ├── grpc_test.go              #   gRPC API tests
+│   └── grpc_performance_test.go  #   gRPC benchmarks
+├── web/                          # Web frontend
+│   ├── index.html                #   Single-page management UI
+│   └── script.js                 #   Frontend interaction logic
+├── main.go                       # Entry point
+├── start-instances.sh            # Launch multiple instances
+├── stop-instances.sh             # Stop instances
+├── status-instances.sh           # Check instance status
+├── Makefile                      # Build and test scripts
+├── go.mod                        # Go module definition
+└── go.sum                        # Dependency lock file
 ```
 
 ## Quick Start
 
-### Environment Requirements
+### Prerequisites
 
-- Go 1.18 or higher
-- GCC 4.8 or higher (RocksDB dependency)
-- Git
+- Go 1.18 or later
+- GCC 4.8 or later (RocksDB CGO dependency)
+- RocksDB development library (`librocksdb-dev` or equivalent)
 
 ### Install Dependencies
 
 ```bash
-# Clone the project
 git clone https://github.com/yourusername/kvcache.git
 cd kvcache
-
-# Install dependencies
 go mod download
 ```
 
@@ -85,378 +111,402 @@ go mod download
 #### Using Makefile (Recommended)
 
 ```bash
-# Build
-make build
-
-# Run
-make run
-
-# Clean
-make clean
+make build    # Build
+make run      # Build and run
+make clean    # Clean build artifacts
 ```
 
 #### Using Go Commands
 
 ```bash
-# Build with CGO environment variables
+# macOS (Homebrew)
 CGO_CFLAGS="-I/opt/homebrew/include" \
-CGO_LDFLAGS="-L/opt/homebrew/lib  -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" \
+CGO_LDFLAGS="-L/opt/homebrew/lib -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" \
   go build -o kvcache .
 
-# Run
-./kvcache
+# Linux
+CGO_CFLAGS="-I/usr/include" \
+CGO_LDFLAGS="-L/lib64 -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" \
+  go build -o kvcache .
 
-# Or run directly with CGO environment variables
-CGO_CFLAGS="-I/opt/homebrew/include" \
-CGO_LDFLAGS="-L/opt/homebrew/lib  -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" \
-  go run main.go
+./kvcache
 ```
 
-After starting the service, it listens on the following ports by default:
-- gRPC service: 50051
-- HTTP service: 8080
-- Monitoring metrics: /metrics
+### Port Allocation
 
-## API Interface
+On startup, the service allocates available port pairs via **automatic port discovery**:
+- Scans range `33000-33100`
+- **Even ports** assigned to gRPC, **odd ports** assigned to HTTP (e.g., 33000/33001, 33002/33003)
+- Allocated ports are logged at startup
 
-### HTTP Interface
+## Feature Details
 
-#### Set Key-Value Pair
-- **URL**: `/api/v1/set`
-- **Method**: POST
-- **Request Body**:
-  ```json
-  {
-    "key": "example",
-    "value": "hello world",
-    "ttl": 0
-  }
-  ```
-- **Response**:
-  ```json
-  {
-    "success": true,
-    "message": "key set successfully"
-  }
-  ```
+### 1. Basic KV Operations (Set / Get / Delete)
 
-#### Get Value
-- **URL**: `/api/v1/get/{key}`
-- **Method**: GET
-- **Response**:
-  ```json
-  {
-    "key": "example",
-    "value": "hello world"
-  }
-  ```
+**Write Path (Set)**:
 
-#### Delete Key-Value Pair
-- **URL**: `/api/v1/delete/{key}`
-- **Method**: DELETE
-- **Response**:
-  ```json
-  {
-    "success": true,
-    "message": "key deleted successfully"
-  }
-  ```
+1. Client sends HTTP `POST /api/v1/set` with `{key, value, ttl}` or gRPC `Set` RPC with `{key: bytes, value: bytes}`
+2. `api` layer validates non-empty key, forwards to `service.KVService.Set()`
+3. `KVService` calls `storage.Set()` to write to RocksDB, recording latency and counter metrics
+4. `RocksDBStorage.Set()` branches on value size:
+   - **Small value** (≤ `DiskThreshold`, default 1MB): `PutCF()` directly into RocksDB
+   - **Large value** (> threshold): write to a file under `value_data/`, store path reference `"__rocksdb_disk_store__://filename"` in RocksDB
+5. Back in `KVService`, if cache is enabled and value < `SizeThreshold` (10KB), store in memory cache
 
-#### Scan Key-Value Pairs
-- **URL**: `/api/v1/scan?prefix=user&limit=100`
-- **Method**: GET
-- **Response**:
-  ```json
-  {
-    "prefix": "user",
-    "limit": 100,
-    "count": 5,
-    "results": {
-      "user1": "value1",
-      "user2": "value2"
-    }
-  }
-  ```
+**Read Path (Get)**:
 
-#### Batch Operations
-- **Batch Set**: `/api/v1/mset` (POST)
-- **Batch Get**: `/api/v1/mget` (POST)
-- **Batch Delete**: `/api/v1/mdelete` (POST)
+1. HTTP `GET /api/v1/get/:key` or gRPC `Get` RPC
+2. `KVService.Get()` checks `sync.Map` cache first:
+   - **Cache hit**: return immediately
+   - **Cache miss**: fall through to `storage.Get()`
+3. `RocksDBStorage.Get()` inspects the stored value:
+   - Empty → `found=false`
+   - `"__evicted__"` → return "value has been evicted" error
+   - Starts with `__rocksdb_disk_store__://` → load full data from `DiskStore`
+   - Normal value → copy and return (avoids RocksDB C-layer buffer invalidation)
+4. After read, if value < cache threshold, **fill it into cache** (cache-aside with read-through)
 
-#### Configuration Management
-- **Get Configuration**: `/api/v1/config` (GET)
-- **Update Configuration**: `/api/v1/config` (POST)
+**Delete Path (Delete)**:
 
-### gRPC Interface
+1. HTTP `DELETE /api/v1/delete/:key` or gRPC `Delete` RPC
+2. `storage.Delete()` reads RocksDB to check type: for large values, deletes disk file first, then removes the key from RocksDB
+3. `KVService.Delete()` removes the key from the memory cache; key count gauge decremented
 
-The gRPC interface is defined in the `proto/kv.proto` file, including the following methods:
+### 2. Batch Operations (MSet / MGet / MDelete)
 
-- `Set` - Set key-value pair
-- `Get` - Get value
-- `Delete` - Delete key-value pair
-- `ScanKeys` - Scan keys
-- `ScanKeyValues` - Scan key-value pairs
-- `MSet` - Batch set
-- `MGet` - Batch get
-- `MDelete` - Batch delete
-- `GetConfig` - Get configuration
-- `UpdateConfig` - Update configuration
+**MSet** — Atomic batch write:
+- HTTP `POST /api/v1/mset` with `{kvs: {k1: v1, ...}, ttl}`
+- `storage.MSet()` uses RocksDB **WriteBatch** — all puts packaged into a single atomic commit
+- Large values are still routed to disk files; small values are batch-written to cache
+
+**MGet** — Batch read with cache penetration optimization:
+- `KVService.MGet()` scans all keys against `sync.Map`; hits go straight to the result set
+- Missed keys are collected and sent to `storage.MGet()` in one call
+- Returned values below the threshold are filled back into cache
+
+**MDelete** — Batch delete:
+- Uses WriteBatch for atomic deletion (each key is checked for disk file references first)
+- Keys are individually removed from the memory cache
+
+### 3. Prefix Scan (Scan)
+
+Implemented on top of RocksDB ordered iterators.
+
+- gRPC offers `ScanKeys` (returns key list only) and `ScanKeyValues` (returns key→value map)
+- HTTP `GET /api/v1/scan?prefix=xxx&limit=100` returns a key-value map
+- `ScanWithValues()` uses `Seek(prefix)` to jump to the prefix start, `break`s on the first non-matching key (leverages sorted order, efficient)
+- `Scan()` uses `SeekToFirst()` to iterate everything and filters by prefix (less efficient)
+- Both skip the reserved system key `global.config`
+
+### 4. Large Value Disk Store (DiskStore)
+
+Secondary storage for values exceeding 1MB:
+
+| Operation | Implementation |
+|-----------|---------------|
+| Store | SHA256(data) as filename, written to `value_data/`; content-addressable (identical content auto-deduplicated) |
+| Load | `os.ReadFile` by filename |
+| Delete | `os.Remove`; file-not-found silently ignored |
+
+Reference link: RocksDB stores `"__rocksdb_disk_store__://filename"`; reads detect the prefix and redirect to disk.
+
+### 5. Memory Cache
+
+`sync.Map`-based L1 read cache in `KVService`:
+
+- **Enabled when**: `config.cache.enabled = true` (default: on)
+- **Threshold**: `config.cache.size_threshold = 10240` (10KB)
+- **Write triggers**: Set success → fill cache; Get/MGet cache miss → fill back
+- **Invalidation triggers**: Delete/MDelete → remove from cache
+- **Concurrency**: `sync.Map` is inherently safe for concurrent reads/writes
+
+### 6. Auto Eviction (Eviction)
+
+Design goal: When disk usage exceeds the configured threshold, evict large values FIFO (oldest creation time first).
+
+| Config | Default |
+|--------|---------|
+| `eviction.enabled` | true |
+| `eviction.disk_usage_threshold` | 80% |
+| `eviction.check_interval` | 60 seconds |
+| `eviction.batch_size` | max 100 keys per round |
+
+**Eviction flow**:
+1. `EvictionManager` periodically runs `checkAndEvict()`
+2. Once threshold is exceeded, iterates the creation-time index; for each large-value key:
+   - Delete the disk file
+   - Replace the RocksDB value with `"__evicted__"` marker
+   - Remove from creation-time index
+3. A Get on an evicted key returns `"value has been evicted"` error
+
+### 7. Runtime Configuration Management
+
+Configuration is set via `DefaultConfig()` in code and can be modified at runtime through the API.
+
+| Block | Field | Default |
+|-------|-------|---------|
+| `rocksdb` | `path` | `./data` |
+| `rocksdb` | `block_cache_size` | 64 MB |
+| `value` | `disk_threshold` | 1 MB (1048576 bytes) |
+| `value` | `disk_path` | `./value_data` |
+| `eviction` | `enabled` | true |
+| `eviction` | `disk_usage_threshold` | 0.8 (80%) |
+| `eviction` | `check_interval` | 60 seconds |
+| `eviction` | `batch_size` | 100 |
+| `cache` | `enabled` | true |
+| `cache` | `size_threshold` | 10240 bytes (10KB) |
+
+**Update methods**:
+- HTTP `POST /api/v1/config`: Flat JSON fields (e.g., `rocksdb_path`, `max_disk_usage`)
+- gRPC `UpdateConfig`: Nested JSON
+- Web frontend configuration tab
+
+When eviction config changes, the `EvictionManager` is automatically restarted.
+
+### 8. Prometheus Monitoring
+
+All metrics use `cachefs` as the namespace, exposed via `/metrics`.
+
+**Operation Counters**:
+```
+cachefs_kv_sets_total / gets_total / deletes_total / scans_total
+cachefs_kv_msets_total / mgets_total / mdeletes_total
+cachefs_config_updates_total
+cachefs_health_checks_total
+```
+
+**Error Counters (CounterVec, split by error label)**:
+```
+cachefs_kv_set_errors_total{error="empty_key"}
+cachefs_kv_get_errors_total{error="not_found"}
+... one counter per operation type
+```
+
+**Latency Histograms (HistogramVec, in seconds)**:
+```
+cachefs_kv_set_latency_seconds{type="kv"}
+cachefs_kv_get_latency_seconds{type="config"}
+... buckets: ExponentialBuckets(0.001, 2, 10) i.e. 1ms ~ 512ms
+```
+
+**Status Gauges**:
+```
+cachefs_kv_keys_current        # total key count
+cachefs_storage_disk_usage_bytes
+cachefs_storage_memory_usage_bytes
+```
+
+## API Reference
+
+### HTTP API (Gin Framework)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/set` | Set key-value pair `{key, value, ttl}` |
+| GET | `/api/v1/get/:key` | Get value |
+| DELETE | `/api/v1/delete/:key` | Delete key-value pair |
+| GET | `/api/v1/scan?prefix=&limit=` | Prefix scan |
+| POST | `/api/v1/mset` | Batch set `{kvs: {...}, ttl}` |
+| POST | `/api/v1/mget` | Batch get `{keys: [...]}` |
+| POST | `/api/v1/mdelete` | Batch delete `{keys: [...]}` |
+| GET | `/api/v1/config` | Get current configuration |
+| POST | `/api/v1/config` | Update configuration |
+| GET | `/health` | Health check |
+| GET | `/metrics` | Prometheus metrics |
+| GET | `/` | Redirect to `/web/index.html` |
+| GET | `/web/*` | Web UI static files |
+
+#### Request/Response Examples
+
+**Set**:
+```json
+// POST /api/v1/set
+{"key": "example", "value": "hello world", "ttl": 0}
+// → {"success": true, "message": "key set successfully"}
+```
+
+**Get**:
+```json
+// GET /api/v1/get/example
+// → {"key": "example", "value": "hello world"}
+```
+
+**Scan**:
+```json
+// GET /api/v1/scan?prefix=user&limit=100
+// → {"prefix": "user", "limit": 100, "count": 2, "results": {"user1": "v1", "user2": "v2"}}
+```
+
+### gRPC API
+
+Defined in `proto/kv.proto`, two services:
+
+**KeyValueService** (10 RPCs):
+
+| RPC | Description | Request | Response |
+|-----|-------------|---------|----------|
+| `Set` | Set key-value pair | `SetRequest{key, value}` | `SetResponse{success, error}` |
+| `Get` | Get value | `GetRequest{key}` | `GetResponse{value, found, error}` |
+| `Delete` | Delete key-value pair | `DeleteRequest{key}` | `DeleteResponse{success, error}` |
+| `ScanKeys` | Scan keys | `ScanRequest{prefix}` | `ScanKeysResponse{keys}` |
+| `ScanKeyValues` | Scan key-value pairs | `ScanRequest{prefix}` | `ScanKeyValuesResponse{key_values}` |
+| `MSet` | Batch set | `MSetRequest{key_values}` | `MSetResponse{success, error}` |
+| `MGet` | Batch get | `MGetRequest{keys}` | `MGetResponse{key_values}` |
+| `MDelete` | Batch delete | `MDeleteRequest{keys}` | `MDeleteResponse{success, error}` |
+| `GetConfig` | Get configuration | `GetConfigRequest{}` | `GetConfigResponse{config}` |
+| `UpdateConfig` | Update configuration | `UpdateConfigRequest{config}` | `UpdateConfigResponse{success, error}` |
+
+**Health** (1 RPC):
+
+| RPC | Description |
+|-----|-------------|
+| `Check` | Health check; returns UNKNOWN / SERVING / NOT_SERVING / SERVICE_UNKNOWN |
+
+Both key and value fields are `bytes` in the proto definition.
+
+**HTTP vs gRPC differences**:
+- HTTP Set accepts TTL (seconds); gRPC proto has no TTL field (hardcoded to 0)
+- HTTP Scan returns a key-value map; gRPC can separately request key list or full mapping
+
+## Client SDK
+
+The `client/` package provides a gRPC client with multi-backend load balancing:
+
+```go
+serverAddrs := []string{
+    "localhost:33000", "localhost:33002", "localhost:33004",
+}
+client, _ := client.NewClient(serverAddrs)
+
+// Round-robin load balancing + automatic failover retry
+client.Set(ctx, "key", []byte("value"), 0)
+value, _ := client.Get(ctx, "key")
+client.Delete(ctx, "key")
+```
+
+- **Load Balancing**: Round-robin across backends on each request
+- **Failover Retry**: If one backend fails, automatically tries the next
+
+## Web Management UI
+
+The `web/` directory contains a single-page management interface (Tailwind CSS + vanilla JS):
+
+| Tab | Function |
+|-----|----------|
+| Overview | Health check, monitoring metrics |
+| Single Ops | Set (with TTL), Get, Delete forms |
+| Batch Ops | MSet / MGet / MDelete with dynamic key-value row add/remove |
+| Scan | Prefix search; toggle between keys-only or keys+values view |
+| Config | Display current JSON config; form-based update |
+
+The root path `/` redirects to `/web/index.html`.
+
+## Multi-Instance Deployment
+
+### Port Allocation
+
+`main.go` scans the `33000-33100` range for available port pairs on startup (even=gRPC, odd=HTTP). Each instance gets a non-conflicting pair automatically.
+
+### Instance Management Scripts
+
+```bash
+# Start instances (one per data directory)
+./start-instances.sh /data/inst1 /data/inst2 /data/inst3
+
+# Check instance status (ports, processes, logs)
+./status-instances.sh
+
+# Stop instances
+./stop-instances.sh /data/inst1 /data/inst2
+./stop-instances.sh all    # stop all running instances
+```
+
+Each instance maintains independently in its own directory:
+- `data/` — RocksDB data
+- `value_data/` — Large value disk store
+- `{name}.log` — runtime log
+- `{name}.pid` — process PID file
 
 ## Testing
 
-### Running Tests
-
-The project includes comprehensive unit tests and integration tests. You can run the tests using the following commands:
-
-#### Using Makefile
+### Run Tests
 
 ```bash
-# Run all tests
-make test
-
-# Run config tests
-make test-config
-
-# Run service tests
-make test-service
-
-# Run storage tests
-make test-storage
-
-# Run API tests
-make test-api
-
-# Run HTTP API tests
-make test-http
-
-# Run gRPC API tests
-make test-grpc
-
-# Run tests with verbose output
-make test-verbose
+make test                 # All unit + integration tests
+make test-config          # config package
+make test-service         # service package
+make test-storage         # storage package
+make test-api             # Integration tests (HTTP + gRPC)
+make test-http            # HTTP API tests only
+make test-grpc            # gRPC API tests only
+make test-verbose         # Verbose output
 ```
 
-#### Using Go Commands
+### Benchmarks
 
 ```bash
-# Run all tests
-CGO_CFLAGS="-I/opt/homebrew/include" \
-CGO_LDFLAGS="-L/opt/homebrew/lib  -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" \
-  go test ./...
-
-# Run specific package tests
-CGO_CFLAGS="-I/opt/homebrew/include" \
-CGO_LDFLAGS="-L/opt/homebrew/lib  -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" \
-  go test ./config
+make test-performance             # All service-layer benchmarks
+make test-benchmark-set           # Single-thread Set benchmark
+make test-benchmark-get           # Single-thread Get benchmark
+make test-benchmark-concurrent    # Concurrent benchmark
+make test-benchmark-mixed         # Mixed ops (80% read + 20% write)
+make test-grpc-performance        # All gRPC-layer benchmarks
+make test-grpc-benchmark-set/get/concurrent/mixed
 ```
 
-## Performance Testing
-
-### Running Performance Tests
-
-The project includes performance test cases for both the service layer and gRPC client. You can run the performance tests using the following commands:
-
-#### Using Makefile
+### Test Coverage
 
 ```bash
-# Run all performance tests
-make test-performance
-
-# Run set benchmark
-make test-benchmark-set
-
-# Run get benchmark
-make test-benchmark-get
-
-# Run concurrent benchmarks
-make test-benchmark-concurrent
-
-# Run mixed operations benchmark
-make test-benchmark-mixed
-
-# Run gRPC performance tests
-make test-grpc-performance
-
-# Run gRPC set benchmark
-make test-grpc-benchmark-set
-
-# Run gRPC get benchmark
-make test-grpc-benchmark-get
-
-# Run gRPC concurrent benchmarks
-make test-grpc-benchmark-concurrent
-
-# Run gRPC mixed operations benchmark
-make test-grpc-benchmark-mixed
+make test-coverage          # Full test coverage
+make test-coverage-html     # Generate HTML coverage report
+make test-coverage-storage  # storage package coverage
 ```
 
-### Performance Test Results
+### Benchmark Results
 
-#### Service Layer Performance
+#### Service Layer
 
-| Test Name | Operations/Second | Average Latency/Operation |
-|-----------|-------------------|---------------------------|
-| Set (Single-thread) | ~316,732 | ~3,762 ns |
-| Get (Single-thread) | ~1,629,542 | ~783 ns |
-| Set (Concurrent) | ~214,846 | ~6,049 ns |
-| Get (Concurrent) | ~4,086,961 | ~309.7 ns |
-| Mixed Operations | ~747,752 | ~1,459 ns |
+| Test | Ops/sec | Avg Latency/op |
+|------|---------|----------------|
+| Set (single-thread) | ~316,732 | ~3,762 ns |
+| Get (single-thread) | ~1,629,542 | ~783 ns |
+| Set (concurrent) | ~214,846 | ~6,049 ns |
+| Get (concurrent) | ~4,086,961 | ~309.7 ns |
+| Mixed | ~747,752 | ~1,459 ns |
 
-#### gRPC Client Performance
+#### gRPC Client
 
-| Test Name | Operations/Second | Average Latency/Operation |
-|-----------|-------------------|---------------------------|
-| Set (Single-thread) | ~20,506 | ~58,621 ns |
-| Get (Single-thread) | ~21,990 | ~49,830 ns |
-| Set (Concurrent) | ~65,038 | ~21,667 ns |
-| Get (Concurrent) | ~95,284 | ~15,663 ns |
-| Mixed Operations | ~76,860 | ~15,564 ns |
+| Test | Ops/sec | Avg Latency/op |
+|------|---------|----------------|
+| Set (single-thread) | ~20,506 | ~58,621 ns |
+| Get (single-thread) | ~21,990 | ~49,830 ns |
+| Set (concurrent) | ~65,038 | ~21,667 ns |
+| Get (concurrent) | ~95,284 | ~15,663 ns |
+| Mixed | ~76,860 | ~15,564 ns |
 
-### Performance Analysis
+## Deployment Recommendations
 
-- **Service Layer Performance**: The service layer shows excellent performance, with get operations being significantly faster than set operations. This is expected since get operations are typically faster than write operations in key-value stores.
-
-- **gRPC Performance**: The gRPC client performance is slower than direct service calls, as expected, due to the additional overhead of network transmission, serialization, and deserialization. However, the performance is still good, especially in concurrent scenarios.
-
-- **Concurrent Performance**: Both the service layer and gRPC client show significant performance improvements in concurrent scenarios, demonstrating the system's ability to handle multiple concurrent requests efficiently.
-
-## Configuration
-
-The default configuration is stored in the `config/config.go` file, and the main configuration items include:
-
-- **RocksDB**:
-  - `path`: RocksDB data storage path, default `./data`
-  - `options`: RocksDB options
-
-- **Service Ports**:
-  - `grpc.port`: gRPC service port, default 50051
-  - `http.port`: HTTP service port, default 8080
-
-- **Value Storage**:
-  - `value.disk_threshold`: Large value storage threshold, default 1MB
-  - `value.disk_path`: Large value storage path, default `./value_data`
-
-- **Eviction Mechanism**:
-  - `eviction.enabled`: Whether to enable eviction, default true
-  - `eviction.disk_usage_threshold`: Disk usage threshold, default 80%
-  - `eviction.check_interval`: Check interval, default 60 seconds
-  - `eviction.batch_size`: Batch eviction size, default 100
-
-- **Monitoring**:
-  - `monitoring.enabled`: Whether to enable monitoring, default true
-  - `monitoring.metrics_path`: Metrics path, default `/metrics`
-  - `monitoring.health_path`: Health check path, default `/api/v1/health`
-
-## Monitoring
-
-The service integrates with Prometheus monitoring, providing the following metrics:
-
-- **Operation Latency**:
-  - `kv_set_latency_seconds`: Set operation latency
-  - `kv_get_latency_seconds`: Get operation latency
-  - `kv_delete_latency_seconds`: Delete operation latency
-  - `kv_scan_latency_seconds`: Scan operation latency
-
-- **Operation Count**:
-  - `kv_sets_total`: Total set operations
-  - `kv_gets_total`: Total get operations
-  - `kv_deletes_total`: Total delete operations
-  - `kv_scans_total`: Total scan operations
-
-- **Error Count**:
-  - `kv_set_errors_total`: Total set errors
-  - `kv_get_errors_total`: Total get errors
-  - `kv_delete_errors_total`: Total delete errors
-  - `kv_scan_errors_total`: Total scan errors
-
-- **Configuration**:
-  - `kv_config_updates_total`: Total configuration updates
-
-- **Health Check**:
-  - `kv_health_checks_total`: Total health checks
-  - `kv_health_check_latency_seconds`: Health check latency
-
-## Deployment
-
-1. **Data Directory**:
-   - Ensure the RocksDB data directory has sufficient disk space
-   - Consider using SSD storage for better performance
-
-2. **Memory Configuration**:
-   - Adjust system memory based on data volume and concurrent access
-   - RocksDB will use part of the memory as cache
-
-3. **Network Configuration**:
-   - Adjust gRPC and HTTP service ports according to actual needs
-   - Consider using a load balancer to distribute requests
-
-4. **Monitoring and Alerting**:
-   - Configure Prometheus monitoring and Grafana dashboards
-   - Set up alerts for disk usage and service health status
-
-5. **Backup Strategy**:
-   - Regularly back up the RocksDB data directory
-   - Consider using RocksDB's checkpoint feature for incremental backups
+1. **Data Directory**: Ensure sufficient disk space for RocksDB; SSD recommended for best performance
+2. **Block Device Readahead**: At startup the server automatically sets `read_ahead_kb` on the block device backing `--value-dir` (default target: 4096 KB; flag `--readahead-kb`, `0` disables). This is critical for sequential read throughput of large values on NVMe — the default kernel value of 128 KB can cost ~25% read bandwidth. Requires write permission to `/sys/block/*/queue/read_ahead_kb` (run as root or pre-tune manually); failures are logged as warnings and do not block startup.
+3. **Memory**: Tune system memory based on dataset size; RocksDB uses part of it as BlockCache (default 64MB)
+3. **Networking**: Use a load balancer to distribute traffic across multiple instances
+4. **Monitoring**: Scrape `/metrics` with Prometheus; pair with Grafana dashboards; set disk usage alerts
+5. **Backup**: Periodically back up the RocksDB data directory, or use RocksDB Checkpoint for incremental backups
 
 ## FAQ
 
-### 1. Service Startup Failure
+### Service Fails to Start
+**Likely causes**: RocksDB library not installed, ports occupied, data directory permission denied
+**Fix**: Verify GCC and librocksdb versions; ensure ports 33000-33100 are free
 
-**Possible Causes**:
-- RocksDB dependency library not installed correctly
-- Port occupied
-- Insufficient data directory permissions
+### Performance Degradation
+**Likely causes**: Dataset too large, insufficient memory, disk I/O bottleneck
+**Fix**: Use `make test-coverage` or benchmarks to locate the bottleneck; tune RocksDB BlockCache size; shard across multiple instances
 
-**Solutions**:
-- Check if GCC version meets requirements
-- Check port usage and modify port settings in the configuration file
-- Ensure the data directory has read and write permissions
-
-### 2. Performance Issues
-
-**Possible Causes**:
-- Excessive data volume
-- Insufficient memory
-- Disk I/O bottleneck
-
-**Solutions**:
-- Increase system memory
-- Use SSD storage
-- Adjust RocksDB configuration parameters
-- Consider sharded storage
-
-### 3. Data Loss
-
-**Possible Causes**:
-- Service abnormal crash
-- Disk failure
-- Eviction mechanism mistakenly deleting data
-
-**Solutions**:
-- Regularly back up data
-- Use RAID storage
-- Adjust eviction mechanism parameters
-
-### 4. Connection Timeout
-
-**Possible Causes**:
-- Network latency
-- High service load
-- Excessive batch operation data volume
-
-**Solutions**:
-- Optimize network environment
-- Increase service instances
-- Reduce the data volume of single batch operations
+### Connection Timeout
+**Likely causes**: Network latency, high server load, oversized batch operations
+**Fix**: Increase instance count; reduce the number of keys per batch operation
 
 ## License
 
 MIT License
-
-## Contribution
-
-Welcome to submit Issues and Pull Requests!
-
-## Contact
-
-If you have any questions, please contact the project maintainer.

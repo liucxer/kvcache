@@ -1,10 +1,13 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"kvcache/config"
-	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	gorocksdb "github.com/linxGnu/grocksdb"
@@ -21,12 +24,20 @@ const (
 	MetadataCF = "metadata"
 )
 
+// 预计算的字节形式标记，避免热路径上 []byte→string 转换带来的堆分配
+var (
+	diskStorePrefixBytes = []byte(DiskStorePrefix)
+	evictedValueBytes    = []byte(EvictedValue)
+	configKeyBytes       = []byte(config.ConfigKey)
+)
+
 // RocksDBStorage RocksDB存储实现
 type RocksDBStorage struct {
 	db           *gorocksdb.DB
 	opts         *gorocksdb.Options
 	cfOpts       *gorocksdb.Options
 	readOpts     *gorocksdb.ReadOptions
+	scanOpts     *gorocksdb.ReadOptions // 扫描专用：不填充 block cache，避免冲掉点查热数据
 	writeOpts    *gorocksdb.WriteOptions
 	defaultCF    *gorocksdb.ColumnFamilyHandle
 	createTimeCF *gorocksdb.ColumnFamilyHandle
@@ -111,6 +122,9 @@ func (s *RocksDBStorage) Stop() error {
 	if s.readOpts != nil {
 		s.readOpts.Destroy()
 	}
+	if s.scanOpts != nil {
+		s.scanOpts.Destroy()
+	}
 	if s.writeOpts != nil {
 		s.writeOpts.Destroy()
 	}
@@ -124,10 +138,57 @@ func (s *RocksDBStorage) initRocksDB() error {
 	s.opts = gorocksdb.NewDefaultOptions()
 	s.opts.SetCreateIfMissing(true)
 
+	// 性能优化
+	s.opts.SetAllowConcurrentMemtableWrites(true)
+	s.opts.SetEnablePipelinedWrite(true)
+	s.opts.SetAllowMmapWrites(true)
+	s.opts.SetAllowMmapReads(true)
+
+	// Write buffer: 256MB memtable, 4 memtables
+	s.opts.SetWriteBufferSize(256 * 1024 * 1024)
+	s.opts.SetMaxWriteBufferNumber(4)
+	s.opts.SetMinWriteBufferNumberToMerge(2)
+
+	// Background jobs: 8 workers for flush + compaction
+	s.opts.SetMaxBackgroundJobs(8)
+	s.opts.SetMaxBackgroundCompactions(6)
+
+	// Block cache: 走配置 block_cache_size（MB），未配置时保持旧的 1GB 行为
+	blockCacheSizeMB := s.config.RocksDB.BlockCacheSize
+	if blockCacheSizeMB <= 0 {
+		blockCacheSizeMB = 1024
+	}
+	blockCache := gorocksdb.NewLRUCache(uint64(blockCacheSizeMB) * 1024 * 1024)
+	bbto := gorocksdb.NewDefaultBlockBasedTableOptions()
+	bbto.SetBlockCache(blockCache)
+	bbto.SetBlockSize(64 * 1024) // 64KB block size
+	// Bloom filter（10 bits/key，~1% 误判）：缓存场景 Get miss 是常态，
+	// 没有 bloom filter 时 miss 会穿透多层 SST 做磁盘查找
+	bbto.SetFilterPolicy(gorocksdb.NewBloomFilter(10))
+	s.opts.SetBlockBasedTableFactory(bbto)
+
+	// Compaction: level compaction with 64MB target file size
+	s.opts.SetTargetFileSizeBase(64 * 1024 * 1024)
+	s.opts.SetMaxBytesForLevelBase(512 * 1024 * 1024)
+
+	log.Printf("RocksDB tuned: write_buffer=256MB x 4, block_cache=%dMB, bloom_filter=10bits, max_bg_jobs=8", blockCacheSizeMB)
+
 	// 初始化选项
 	s.cfOpts = gorocksdb.NewDefaultOptions()
+	s.cfOpts.SetAllowConcurrentMemtableWrites(true)
+	s.cfOpts.SetWriteBufferSize(256 * 1024 * 1024)
+	s.cfOpts.SetMaxWriteBufferNumber(4)
+	cfBbto := gorocksdb.NewDefaultBlockBasedTableOptions()
+	cfBbto.SetBlockCache(blockCache)
+	cfBbto.SetBlockSize(64 * 1024)
+	// 注意 filter policy 是 move 语义，不能共享，需单独实例
+	cfBbto.SetFilterPolicy(gorocksdb.NewBloomFilter(10))
+	s.cfOpts.SetBlockBasedTableFactory(cfBbto)
 
 	s.readOpts = gorocksdb.NewDefaultReadOptions()
+	s.readOpts.SetFillCache(true)
+	s.scanOpts = gorocksdb.NewDefaultReadOptions()
+	s.scanOpts.SetFillCache(false) // 扫描不填充 block cache，避免冲掉点查热数据
 	s.writeOpts = gorocksdb.NewDefaultWriteOptions()
 
 	// 2. 准备要使用的列族
@@ -196,14 +257,14 @@ func (s *RocksDBStorage) Get(key []byte) ([]byte, bool, error) {
 
 	valueBytes := value.Data()
 
-	// 2. 检查值类型
-	if string(valueBytes) == EvictedValue {
+	// 2. 检查值类型（bytes 比较，避免热路径上 []byte→string 的堆分配）
+	if bytes.Equal(valueBytes, evictedValueBytes) {
 		return nil, true, fmt.Errorf("value has been evicted")
 	}
 
-	if strings.HasPrefix(string(valueBytes), DiskStorePrefix) {
+	if bytes.HasPrefix(valueBytes, diskStorePrefixBytes) {
 		// 从磁盘获取
-		filePath := strings.TrimPrefix(string(valueBytes), DiskStorePrefix)
+		filePath := string(valueBytes[len(diskStorePrefixBytes):])
 		diskValue, err := s.diskStore.Load(filePath)
 		if err != nil {
 			return nil, true, err
@@ -219,6 +280,36 @@ func (s *RocksDBStorage) Get(key []byte) ([]byte, bool, error) {
 	return copyValue, true, nil
 }
 
+// RawLookup 定位 key 的存储形态（不加载大 value 内容）：
+// 落盘大 value 返回文件绝对路径；内联小 value 返回拷贝后的字节；
+// 未找到/已淘汰返回 found=false。供裸 TCP 数据面 sendfile 使用。
+func (s *RocksDBStorage) RawLookup(key []byte) (filePath string, inline []byte, found bool, err error) {
+	value, err := s.db.GetCF(s.readOpts, s.defaultCF, key)
+	if err != nil {
+		return "", nil, false, err
+	}
+	defer value.Free()
+
+	if value.Size() == 0 {
+		return "", nil, false, nil
+	}
+
+	valueBytes := value.Data()
+	if bytes.Equal(valueBytes, evictedValueBytes) {
+		return "", nil, false, nil
+	}
+
+	if bytes.HasPrefix(valueBytes, diskStorePrefixBytes) {
+		fileName := string(valueBytes[len(diskStorePrefixBytes):])
+		return s.diskStore.FullPath(fileName), nil, true, nil
+	}
+
+	// 内联小 value：拷贝，因为 value.Free() 会释放内部缓冲区
+	inline = make([]byte, len(valueBytes))
+	copy(inline, valueBytes)
+	return "", inline, true, nil
+}
+
 // Delete 删除键值对
 func (s *RocksDBStorage) Delete(key []byte) error {
 	// 1. 先获取值，检查是否存储在磁盘
@@ -230,9 +321,9 @@ func (s *RocksDBStorage) Delete(key []byte) error {
 
 	if value.Size() > 0 {
 		valueBytes := value.Data()
-		if strings.HasPrefix(string(valueBytes), DiskStorePrefix) {
+		if bytes.HasPrefix(valueBytes, diskStorePrefixBytes) {
 			// 删除磁盘文件
-			filePath := strings.TrimPrefix(string(valueBytes), DiskStorePrefix)
+			filePath := string(valueBytes[len(diskStorePrefixBytes):])
 			s.diskStore.Delete(filePath)
 		}
 	}
@@ -250,28 +341,32 @@ func (s *RocksDBStorage) Delete(key []byte) error {
 	return nil
 }
 
-// Scan 扫描键前缀
-func (s *RocksDBStorage) Scan(prefix []byte) ([][]byte, error) {
-	iter := s.db.NewIteratorCF(s.readOpts, s.defaultCF)
+// Scan 扫描键前缀（只返回 key，不加载 value）。
+// 从 prefix 处 Seek 定位、不匹配即 break，避免全表扫描。
+// limit <= 0 表示不限制。使用 scanOpts（不填充 block cache）。
+func (s *RocksDBStorage) Scan(prefix []byte, limit int) ([][]byte, error) {
+	iter := s.db.NewIteratorCF(s.scanOpts, s.defaultCF)
 	defer iter.Close()
 
 	var keys [][]byte
-	prefixStr := string(prefix)
+	count := 0
 
-	// 从第一个键开始遍历
-	for iter.SeekToFirst(); iter.Valid(); iter.Next() {
+	for iter.Seek(prefix); iter.Valid(); iter.Next() {
 		key := iter.Key().Data()
+		if !bytes.HasPrefix(key, prefix) {
+			break
+		}
+		// 跳过配置键
+		if bytes.Equal(key, configKeyBytes) {
+			continue
+		}
 		// 复制键，因为 iter.Key().Data() 会在 iter.Next() 后失效
 		keyCopy := make([]byte, len(key))
 		copy(keyCopy, key)
-		keyStr := string(keyCopy)
-
-		// 检查键是否以前缀开头
-		if strings.HasPrefix(keyStr, prefixStr) {
-			// 跳过配置键
-			if keyStr != config.ConfigKey {
-				keys = append(keys, keyCopy)
-			}
+		keys = append(keys, keyCopy)
+		count++
+		if limit > 0 && count >= limit {
+			break
 		}
 	}
 
@@ -282,34 +377,47 @@ func (s *RocksDBStorage) Scan(prefix []byte) ([][]byte, error) {
 	return keys, nil
 }
 
-// ScanWithValues 扫描键前缀并返回值
-func (s *RocksDBStorage) ScanWithValues(prefix []byte) (map[string][]byte, error) {
-	iter := s.db.NewIteratorCF(s.readOpts, s.defaultCF)
+// ScanWithValues 扫描键前缀并返回值。
+// 直接从迭代器取 value，消除旧实现"每个 key 再 Get 一次"的 N+1 问题；
+// 只有磁盘大值引用才去读文件。limit <= 0 表示不限制。
+func (s *RocksDBStorage) ScanWithValues(prefix []byte, limit int) (map[string][]byte, error) {
+	iter := s.db.NewIteratorCF(s.scanOpts, s.defaultCF)
 	defer iter.Close()
 
 	keyValues := make(map[string][]byte)
-	prefixStr := string(prefix)
+	count := 0
 
 	for iter.Seek(prefix); iter.Valid(); iter.Next() {
 		key := iter.Key().Data()
-		keyStr := string(key)
-
-		if !strings.HasPrefix(keyStr, prefixStr) {
+		if !bytes.HasPrefix(key, prefix) {
 			break
 		}
-
 		// 跳过配置键
-		if keyStr == config.ConfigKey {
+		if bytes.Equal(key, configKeyBytes) {
 			continue
 		}
 
-		// 获取值
-		value, found, err := s.Get(key)
-		if err != nil {
-			continue // 跳过错误的键
+		value := iter.Value().Data()
+		switch {
+		case bytes.Equal(value, evictedValueBytes):
+			continue // 已淘汰的 key 不返回
+		case bytes.HasPrefix(value, diskStorePrefixBytes):
+			// 磁盘大值：读文件
+			filePath := string(value[len(diskStorePrefixBytes):])
+			diskValue, err := s.diskStore.Load(filePath)
+			if err != nil {
+				continue // 跳过读取失败的键
+			}
+			keyValues[string(key)] = diskValue
+		default:
+			// 复制值，因为 iter.Value().Data() 会在 iter.Next() 后失效
+			valueCopy := make([]byte, len(value))
+			copy(valueCopy, value)
+			keyValues[string(key)] = valueCopy
 		}
-		if found {
-			keyValues[keyStr] = value
+		count++
+		if limit > 0 && count >= limit {
+			break
 		}
 	}
 
@@ -353,50 +461,119 @@ func (s *RocksDBStorage) MSet(keyValues map[string][]byte) error {
 	return s.db.Write(s.writeOpts, wb)
 }
 
-// MGet 批量获取值
+// MGet 批量获取值。
+// 一次 MultiGetCF 拿到所有小值/磁盘引用（替代旧的逐 key Get），
+// 磁盘大值再并发读文件（最多 8 路，避免并发突刺打满磁盘）。
 func (s *RocksDBStorage) MGet(keys [][]byte) (map[string][]byte, error) {
 	keyValues := make(map[string][]byte)
+	if len(keys) == 0 {
+		return keyValues, nil
+	}
 
-	for _, key := range keys {
-		value, found, err := s.Get(key)
-		if err == nil && found {
-			keyValues[string(key)] = value
+	slices, err := s.db.MultiGetCF(s.readOpts, s.defaultCF, keys...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		for _, sl := range slices {
+			sl.Free()
 		}
+	}()
+
+	type diskRef struct {
+		key      string
+		filePath string
+	}
+	var diskRefs []diskRef
+
+	for i, sl := range slices {
+		if sl.Size() == 0 {
+			continue // key 不存在
+		}
+		valueBytes := sl.Data()
+		if bytes.Equal(valueBytes, evictedValueBytes) {
+			continue // 已淘汰
+		}
+		if bytes.HasPrefix(valueBytes, diskStorePrefixBytes) {
+			diskRefs = append(diskRefs, diskRef{
+				key:      string(keys[i]),
+				filePath: string(valueBytes[len(diskStorePrefixBytes):]),
+			})
+			continue
+		}
+		// 复制值，Slice.Free 后内部缓冲区失效
+		valueCopy := make([]byte, len(valueBytes))
+		copy(valueCopy, valueBytes)
+		keyValues[string(keys[i])] = valueCopy
+	}
+
+	// 并发加载磁盘大值
+	if len(diskRefs) > 0 {
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 8)
+		for _, ref := range diskRefs {
+			wg.Add(1)
+			go func(ref diskRef) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				data, err := s.diskStore.Load(ref.filePath)
+				if err != nil {
+					return // 跳过读取失败的键
+				}
+				mu.Lock()
+				keyValues[ref.key] = data
+				mu.Unlock()
+			}(ref)
+		}
+		wg.Wait()
 	}
 
 	return keyValues, nil
 }
 
-// MDelete 批量删除键值对
+// MDelete 批量删除键值对。
+// 先用一次 MultiGetCF 找出磁盘大值引用（替代旧的逐 key Get），
+// 磁盘文件并发删除，RocksDB 侧走单个 WriteBatch 原子提交。
 func (s *RocksDBStorage) MDelete(keys [][]byte) error {
+	if len(keys) == 0 {
+		return nil
+	}
+
+	slices, err := s.db.MultiGetCF(s.readOpts, s.defaultCF, keys...)
+	if err != nil {
+		return err
+	}
+
 	wb := gorocksdb.NewWriteBatch()
 	defer wb.Destroy()
 
-	for _, key := range keys {
-		// 先获取值，检查是否存储在磁盘
-		value, err := s.db.GetCF(s.readOpts, s.defaultCF, key)
-		if err != nil {
-			continue
-		}
-
-		if value.Size() > 0 {
-			valueBytes := value.Data()
-			if strings.HasPrefix(string(valueBytes), DiskStorePrefix) {
-				// 删除磁盘文件
-				filePath := strings.TrimPrefix(string(valueBytes), DiskStorePrefix)
-				s.diskStore.Delete(filePath)
+	var wg sync.WaitGroup
+	for i, sl := range slices {
+		if sl.Size() > 0 {
+			valueBytes := sl.Data()
+			if bytes.HasPrefix(valueBytes, diskStorePrefixBytes) {
+				// 并发删除磁盘文件
+				filePath := string(valueBytes[len(diskStorePrefixBytes):])
+				wg.Add(1)
+				go func(fp string) {
+					defer wg.Done()
+					_ = s.diskStore.Delete(fp)
+				}(filePath)
 			}
 		}
-		value.Free()
+		sl.Free()
 
 		// 从RocksDB删除
-		wb.DeleteCF(s.defaultCF, key)
+		wb.DeleteCF(s.defaultCF, keys[i])
 
 		// 从创建时间记录中删除
-		if err := s.removeCreateTime(key); err != nil {
+		if err := s.removeCreateTime(keys[i]); err != nil {
 			continue
 		}
 	}
+	wg.Wait()
 
 	return s.db.Write(s.writeOpts, wb)
 }
@@ -585,4 +762,20 @@ func (s *RocksDBStorage) loadConfig() error {
 // storeConfig 存储配置
 func (s *RocksDBStorage) storeConfig() error {
 	return s.UpdateConfig(s.config)
+}
+
+// GetDiskCapacity 获取磁盘容量信息
+func (s *RocksDBStorage) GetDiskCapacity() (capacity, available, used int64, err error) {
+	dataPath := s.config.RocksDB.Path
+
+	stat := &syscall.Statfs_t{}
+	if err = syscall.Statfs(dataPath, stat); err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to get disk capacity: %v", err)
+	}
+
+	capacity = int64(stat.Blocks) * int64(stat.Bsize)
+	available = int64(stat.Bavail) * int64(stat.Bsize)
+	used = capacity - available
+
+	return capacity, available, used, nil
 }

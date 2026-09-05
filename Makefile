@@ -4,8 +4,8 @@
 TARGET = kvcache
 
 # 设置环境变量
-CGO_CFLAGS = "-I/opt/homebrew/include"
-CGO_LDFLAGS = "-L/opt/homebrew/lib  -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"
+CGO_CFLAGS = "-I/usr/local/include"
+CGO_LDFLAGS = "-L/usr/local/lib  -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd -Wl,-rpath,/usr/local/lib"
 
 # 默认目标
 all: build

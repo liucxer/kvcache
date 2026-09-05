@@ -10,8 +10,11 @@ type Storage interface {
 	Set(key, value []byte) error
 	Get(key []byte) ([]byte, bool, error)
 	Delete(key []byte) error
-	Scan(prefix []byte) ([][]byte, error)
-	ScanWithValues(prefix []byte) (map[string][]byte, error)
+	// RawLookup 定位 key 的存储形态：落盘返回文件绝对路径，内联返回字节
+	RawLookup(key []byte) (filePath string, inline []byte, found bool, err error)
+	// limit <= 0 表示不限制
+	Scan(prefix []byte, limit int) ([][]byte, error)
+	ScanWithValues(prefix []byte, limit int) (map[string][]byte, error)
 
 	// 批量操作
 	MSet(keyValues map[string][]byte) error
@@ -25,6 +28,9 @@ type Storage interface {
 	// 管理操作
 	Start() error
 	Stop() error
+
+	// 获取磁盘容量信息
+	GetDiskCapacity() (capacity, available, used int64, err error)
 
 	// 淘汰管理
 	StartEvictionManager() error

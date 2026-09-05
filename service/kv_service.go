@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"kvcache/config"
@@ -16,6 +17,9 @@ type KVService struct {
 	config  *config.Config
 	metrics *Metrics
 	cache   sync.Map // 内存缓存，使用sync.Map保证线程安全
+	// cacheCount 近似跟踪 cache 中的 key 数（配合 config.Cache.MaxKeys 防无界增长）。
+	// 并发下允许少量误差，缓存场景可接受。
+	cacheCount int64
 }
 
 // NewKVService 创建新的键值存储服务实例
@@ -25,6 +29,29 @@ func NewKVService(storage storage.Storage, config *config.Config) *KVService {
 		storage: storage,
 		config:  config,
 		metrics: metrics,
+	}
+}
+
+// cacheStore 写入内存缓存，带条数上限（cacheCount 为近似计数，并发下允许少量误差）。
+// 缓存满时新 key 不再进入（不做淘汰，简单防 OOM）；已存在的 key 正常覆盖更新。
+func (s *KVService) cacheStore(key string, value []byte) {
+	maxKeys := int64(s.config.Cache.MaxKeys)
+	if maxKeys > 0 && atomic.LoadInt64(&s.cacheCount) >= maxKeys {
+		if _, ok := s.cache.Load(key); !ok {
+			return
+		}
+	}
+	if _, loaded := s.cache.LoadOrStore(key, value); !loaded {
+		atomic.AddInt64(&s.cacheCount, 1)
+	} else {
+		s.cache.Store(key, value)
+	}
+}
+
+// cacheDelete 从内存缓存删除并维护计数
+func (s *KVService) cacheDelete(key string) {
+	if _, ok := s.cache.LoadAndDelete(key); ok {
+		atomic.AddInt64(&s.cacheCount, -1)
 	}
 }
 
@@ -48,7 +75,7 @@ func (s *KVService) Set(ctx context.Context, key string, value []byte, ttl time.
 
 	// 检查是否需要写入缓存
 	if s.config.Cache.Enabled && len(value) < s.config.Cache.SizeThreshold {
-		s.cache.Store(key, value)
+		s.cacheStore(key, value)
 	}
 
 	s.metrics.Sets.Inc()
@@ -89,7 +116,7 @@ func (s *KVService) Get(ctx context.Context, key string) ([]byte, error) {
 
 	// 如果值小于缓存阈值，并且缓存未命中，则将值写入缓存
 	if s.config.Cache.Enabled && len(value) < s.config.Cache.SizeThreshold {
-		s.cache.Store(key, value)
+		s.cacheStore(key, value)
 	}
 
 	s.metrics.Gets.Inc()
@@ -116,7 +143,7 @@ func (s *KVService) Delete(ctx context.Context, key string) error {
 
 	// 从缓存中删除
 	if s.config.Cache.Enabled {
-		s.cache.Delete(key)
+		s.cacheDelete(key)
 	}
 
 	s.metrics.Deletes.Inc()
@@ -135,7 +162,7 @@ func (s *KVService) Scan(ctx context.Context, prefix string, limit int) (map[str
 		limit = 100
 	}
 
-	results, err := s.storage.ScanWithValues([]byte(prefix))
+	results, err := s.storage.ScanWithValues([]byte(prefix), limit)
 	if err != nil {
 		s.metrics.ScanErrors.WithLabelValues(err.Error()).Inc()
 		return nil, err
@@ -143,6 +170,33 @@ func (s *KVService) Scan(ctx context.Context, prefix string, limit int) (map[str
 
 	s.metrics.Scans.Inc()
 	return results, nil
+}
+
+// ScanKeys 扫描键（只返回键，不返回值）
+func (s *KVService) ScanKeys(ctx context.Context, prefix string, limit int) ([]string, error) {
+	start := time.Now()
+	defer func() {
+		s.metrics.ScanLatency.WithLabelValues("kv").Observe(time.Since(start).Seconds())
+	}()
+
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+
+	keys, err := s.storage.Scan([]byte(prefix), limit)
+	if err != nil {
+		s.metrics.ScanErrors.WithLabelValues(err.Error()).Inc()
+		return nil, err
+	}
+
+	// 转换 [][]byte 为 []string
+	result := make([]string, len(keys))
+	for i, key := range keys {
+		result[i] = string(key)
+	}
+
+	s.metrics.Scans.Inc()
+	return result, nil
 }
 
 // MSet 批量设置键值对
@@ -167,7 +221,7 @@ func (s *KVService) MSet(ctx context.Context, kvs map[string][]byte, ttl time.Du
 	if s.config.Cache.Enabled {
 		for key, value := range kvs {
 			if len(value) < s.config.Cache.SizeThreshold {
-				s.cache.Store(key, value)
+				s.cacheStore(key, value)
 			}
 		}
 	}
@@ -224,7 +278,7 @@ func (s *KVService) MGet(ctx context.Context, keys []string) (map[string][]byte,
 			results[key] = value
 			// 如果值小于缓存阈值，将其写入缓存
 			if s.config.Cache.Enabled && len(value) < s.config.Cache.SizeThreshold {
-				s.cache.Store(key, value)
+				s.cacheStore(key, value)
 			}
 		}
 	}
@@ -260,7 +314,7 @@ func (s *KVService) MDelete(ctx context.Context, keys []string) error {
 	// 批量从缓存中删除
 	if s.config.Cache.Enabled {
 		for _, key := range keys {
-			s.cache.Delete(key)
+			s.cacheDelete(key)
 		}
 	}
 
